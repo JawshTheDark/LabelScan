@@ -138,10 +138,32 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun processOrderSheetUri(uri: Uri) {
+    fun processOrderSheetUri(uri: Uri) = processOrderSheetUris(listOf(uri))
+
+    /** Reads one or more scanned pages (e.g. from the document scanner) and merges their rows. */
+    fun processOrderSheetUris(uris: List<Uri>) {
+        if (busy || uris.isEmpty()) return
+        busy = true
         viewModelScope.launch {
-            val bmp = withContext(Dispatchers.IO) { runCatching { Photos.load(app, uri) }.getOrNull() }
-            if (bmp == null) say("Couldn't open that image") else processOrderSheet(bmp)
+            try {
+                val all = mutableListOf<OrderRow>()
+                for (uri in uris) {
+                    val bmp = withContext(Dispatchers.IO) { runCatching { Photos.load(app, uri) }.getOrNull() } ?: continue
+                    all += withContext(Dispatchers.Default) { recognizer.readOrderSheet(bmp) }
+                }
+                val byUpc = LinkedHashMap<String, OrderRow>()
+                for (r in all) {
+                    if (r.upc.isBlank()) continue
+                    val e = byUpc[r.upc]
+                    byUpc[r.upc] = if (e == null || (e.name.isBlank() && r.name.isNotBlank())) r else e
+                }
+                val rows = byUpc.values.toList()
+                if (rows.isEmpty()) say("No rows found — try re-scanning the page") else screen = Screen.OrderReview(rows)
+            } catch (e: Exception) {
+                say("Couldn't read the sheet: ${e.message}")
+            } finally {
+                busy = false
+            }
         }
     }
 

@@ -12,8 +12,8 @@ android {
         applicationId = "dev.jawsh.labelscan"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.3.3"
+        versionCode = 7
+        versionName = "0.4.0"
         // 64-bit ARM phones only; the bundled ML Kit models otherwise ship per ABI.
         ndk { abiFilters += listOf("arm64-v8a") }
     }
@@ -59,6 +59,10 @@ dependencies {
     // Bundled (on-device, offline) models — no Play Services download on first use.
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
+
+    // Google's document scanner (edge detect, de-skew, multi-page) — the portable
+    // equivalent of Samsung's camera "scan document". Downloads on first use via Play Services.
+    implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0-beta1")
 
     testImplementation("junit:junit:4.13.2")
 }

@@ -63,6 +63,10 @@ import java.util.concurrent.Executors
 
 @Composable
 fun ScanScreen(vm: AppViewModel, modifier: Modifier, orderSheet: Boolean = false) {
+    if (orderSheet) {
+        OrderSheetScan(vm, modifier)
+        return
+    }
     val ctx = LocalContext.current
     var granted by remember {
         mutableStateOf(ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
