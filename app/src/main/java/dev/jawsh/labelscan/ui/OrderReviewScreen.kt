@@ -53,6 +53,9 @@ fun OrderReviewScreen(vm: AppViewModel, review: Screen.OrderReview, modifier: Mo
         mutableStateListOf<Boolean>().apply { addAll(review.rows.map { it.upcValid }) }
     }
     val chosen = include.count { it }
+    val existing by androidx.compose.runtime.produceState(emptySet<String>(), review) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { vm.db.existingUpcs(review.rows.map { it.upc }) }
+    }
 
     fun toProducts(): List<Product> = drafts.filterIndexed { i, d -> include[i] && d.upc.length >= 6 }.map { d ->
         val notes = buildList {
@@ -95,7 +98,7 @@ fun OrderReviewScreen(vm: AppViewModel, review: Screen.OrderReview, modifier: Mo
 
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 12.dp)) {
             itemsIndexed(drafts) { i, d ->
-                RowEditor(d, include[i]) { include[i] = it }
+                RowEditor(d, include[i], review.rows[i].upc in existing) { include[i] = it }
                 HorizontalDivider()
             }
         }
@@ -108,7 +111,7 @@ fun OrderReviewScreen(vm: AppViewModel, review: Screen.OrderReview, modifier: Mo
 }
 
 @Composable
-private fun RowEditor(d: RowDraft, checked: Boolean, onCheck: (Boolean) -> Unit) {
+private fun RowEditor(d: RowDraft, checked: Boolean, alreadyInCatalog: Boolean, onCheck: (Boolean) -> Unit) {
     var name by remember(d) { mutableStateOf(d.name) }
     var upc by remember(d) { mutableStateOf(d.upc) }
     var size by remember(d) { mutableStateOf(d.size) }
@@ -137,7 +140,16 @@ private fun RowEditor(d: RowDraft, checked: Boolean, onCheck: (Boolean) -> Unit)
                     singleLine = true,
                 )
             }
-            if (d.section.isNotEmpty()) Text(d.section, style = MaterialTheme.typography.labelSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (d.section.isNotEmpty()) Text(d.section, style = MaterialTheme.typography.labelSmall)
+                if (alreadyInCatalog) {
+                    Text(
+                        "• already in catalog — will fill blanks",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
         }
     }
 }

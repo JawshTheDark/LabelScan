@@ -150,6 +150,15 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
         readableDatabase.rawQuery("SELECT * FROM product WHERE upc = ?", arrayOf(upc))
             .use { if (it.moveToFirst()) it.toProduct() else null }
 
+    /** Of the given UPCs, those already in the repository (so an import merges, not duplicates). */
+    fun existingUpcs(upcs: Collection<String>): Set<String> {
+        val list = upcs.filter { it.isNotBlank() }.distinct()
+        if (list.isEmpty()) return emptySet()
+        val marks = list.joinToString(",") { "?" }
+        return readableDatabase.rawQuery("SELECT upc FROM product WHERE upc IN ($marks)", list.toTypedArray())
+            .use { c -> buildSet { while (c.moveToNext()) add(c.getString(0)) } }
+    }
+
     fun receipts(upc: String): List<Receipt> =
         readableDatabase.rawQuery("SELECT * FROM receipt WHERE upc = ? ORDER BY scanned_at DESC", arrayOf(upc))
             .use { c -> buildList { while (c.moveToNext()) add(c.toReceipt()) } }
@@ -268,34 +277,54 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
     /** Adds catalog rows read from an order sheet; fills blanks on any that already exist. */
     fun importOrderRows(rows: List<Product>): Int = import(rows)
 
-    /** Merges imported rows: non-blank imported text wins, counts and dates widen. */
+    /**
+     * Upserts catalog rows keyed by UPC — never a second row for the same UPC.
+     * Existing data is preserved: a field is only written when it is currently
+     * blank, so re-importing the same UPC across pages fills gaps without
+     * clobbering good values. Notes accumulate (codes/order#s union), and
+     * receipt counts and dates are left as they were.
+     */
     fun import(products: List<Product>): Int {
+        // Fold same-UPC duplicates within this batch together first.
+        val byUpc = LinkedHashMap<String, Product>()
+        for (p in products) {
+            if (p.upc.isBlank()) continue
+            byUpc[p.upc] = byUpc[p.upc]?.let { fillBlanks(it, p) } ?: p
+        }
         val db = writableDatabase
         db.beginTransaction()
         try {
-            for (p in products) {
-                val old = product(p.upc)
-                val merged = if (old == null) p else Product(
-                    upc = p.upc,
-                    name = p.name.ifBlank { old.name },
-                    category = p.category.ifBlank { old.category },
-                    itemNo = p.itemNo.ifBlank { old.itemNo },
-                    size = p.size.ifBlank { old.size },
-                    dept = p.dept.ifBlank { old.dept },
-                    plu = p.plu.ifBlank { old.plu },
-                    lastSlot = p.lastSlot.ifBlank { old.lastSlot },
-                    notes = p.notes.ifBlank { old.notes },
-                    timesSeen = maxOf(p.timesSeen, old.timesSeen),
-                    firstSeen = listOf(p.firstSeen, old.firstSeen).filter { it > 0 }.minOrNull() ?: 0,
-                    lastSeen = maxOf(p.lastSeen, old.lastSeen),
-                )
+            for ((upc, p) in byUpc) {
+                val merged = product(upc)?.let { fillBlanks(it, p) } ?: p
                 db.insertWithOnConflict("product", null, merged.toValues(), SQLiteDatabase.CONFLICT_REPLACE)
             }
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
         }
-        return products.size
+        return byUpc.size
+    }
+
+    /** Kept-existing merge: [base] wins on every non-blank field; [extra] only fills gaps. */
+    private fun fillBlanks(base: Product, extra: Product) = base.copy(
+        name = base.name.ifBlank { extra.name },
+        category = base.category.ifBlank { extra.category },
+        itemNo = base.itemNo.ifBlank { extra.itemNo },
+        size = base.size.ifBlank { extra.size },
+        dept = base.dept.ifBlank { extra.dept },
+        plu = base.plu.ifBlank { extra.plu },
+        lastSlot = base.lastSlot.ifBlank { extra.lastSlot },
+        notes = mergeNotes(base.notes, extra.notes),
+        timesSeen = maxOf(base.timesSeen, extra.timesSeen),
+        firstSeen = listOf(base.firstSeen, extra.firstSeen).filter { it > 0 }.minOrNull() ?: 0,
+        lastSeen = maxOf(base.lastSeen, extra.lastSeen),
+    )
+
+    /** Unions two notes strings on their " | " segments, dropping duplicates. */
+    private fun mergeNotes(a: String, b: String): String {
+        val seen = LinkedHashSet<String>()
+        (a.split(" | ") + b.split(" | ")).map { it.trim() }.filter { it.isNotEmpty() }.forEach { seen += it }
+        return seen.joinToString(" | ")
     }
 
     private fun Product.toValues() = ContentValues().apply {
