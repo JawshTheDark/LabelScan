@@ -44,7 +44,8 @@ object OrderSheetParser {
     private val SECTION = Regex("""^\d{3}\s+[A-Z].*""")
     private val DROP = Regex(
         "^(PAGE|STORE|DEPT|RETAIL|DESCRIPTION|VENDOR|MEIJER|PRODUCT|SIZE|UPC|PACK|STATUS|" +
-            "FROM|THRU|RUN|SHELF|ORD|ACT|SALE)\\b",
+            "FROM|THRU|RUN|SHELF|ORD|ACT|SALE|DISTRIBUTION|FACILITY|ORDER|BOOK|BATCH|REASON|" +
+            "THROW|COMPACTOR|EST|EXTENDED|ESTIMATED|KEY|QTY)\\b",
         RegexOption.IGNORE_CASE,
     )
 
@@ -62,19 +63,22 @@ object OrderSheetParser {
             .sortedBy { it.cy }
         if (anchors.isEmpty()) return emptyList()
 
-        // Typical row height = median vertical spacing between consecutive barcodes.
-        val gaps = anchors.zipWithNext { a, b -> b.cy - a.cy }.filter { it > 0 }.sorted()
-        val rowH = gaps.getOrNull(gaps.size / 2) ?: anchors.first().h * 2.5f
-
         val sections = texts.filter { SECTION.matches(it.text.trim()) }.sortedBy { it.cy }
+        val gaps = anchors.zipWithNext { a, b -> b.cy - a.cy }.filter { it > 0 }.sorted()
+        val rowH = gaps.getOrNull(gaps.size / 2) ?: (anchors.first().h * 3f)
 
-        val used = HashSet<TextBox>()
-        return anchors.map { bc ->
-            // Text in this barcode's horizontal band and to its left (pack/status sit to the right).
-            val band = texts.filter {
-                it !in used && it.cx < bc.cx + bc.w * 0.2f && kotlin.math.abs(it.cy - bc.cy) <= rowH * 0.55f
-            }
-            used += band
+        // Segment the page into row bands by the midpoints between barcodes, so every
+        // line between two barcodes belongs to a row — the description sits at the top
+        // of a tall block while the barcode is lower, so a fixed window around the
+        // barcode misses it, but a midpoint band never does. Cap the reach with the row
+        // pitch so the first/last rows don't swallow page headers or the footer.
+        return anchors.mapIndexed { i, bc ->
+            val midTop = if (i == 0) bc.cy - rowH else (anchors[i - 1].cy + bc.cy) / 2f
+            val midBottom = if (i == anchors.lastIndex) bc.cy + rowH else (bc.cy + anchors[i + 1].cy) / 2f
+            val top = maxOf(midTop, bc.cy - rowH * 1.3f)
+            val bottom = minOf(midBottom, bc.cy + rowH * 1.3f)
+            // Row text is left of the barcode column (pack/status sit to its right).
+            val band = texts.filter { it.cy > top && it.cy <= bottom && it.cx < bc.cx + bc.w * 0.3f }
             buildRow(bc, band, sections)
         }
     }
@@ -84,20 +88,15 @@ object OrderSheetParser {
         val cells = band.map { it.text.trim() }
             .filter { it.isNotEmpty() && !DROP.containsMatchIn(it) && !MONEY.matches(it) && !SECTION.matches(it) }
 
-        val leftEdge = band.minOfOrNull { it.x } ?: 0
-        val span = ((band.maxOfOrNull { it.right } ?: bc.x) - leftEdge).coerceAtLeast(1)
-
-        // Description lines: letter-bearing, not a size/section/field code.
-        val descLines = band.filter { tb ->
-            val t = tb.text.trim()
-            t.count(Char::isLetter) >= 3 && !SIZE.matches(t) && !SECTION.matches(t) &&
-                !Regex("^(ITM|UPC|ASG|PLU)", RegexOption.IGNORE_CASE).containsMatchIn(t)
-        }
-        // Prefer the left column, but if column geometry is off, fall back to all description lines
-        // so a row still gets a name instead of coming back blank.
-        val leftCol = descLines.filter { it.cx - leftEdge < span * 0.6f }
-        val name = (leftCol.ifEmpty { descLines })
-            .sortedBy { it.cy }
+        // Description lines: letter-bearing, left of the barcode, not a size/section/field/status code.
+        val name = band
+            .filter { tb ->
+                val t = tb.text.trim()
+                tb.cx < bc.cx && t.count(Char::isLetter) >= 3 &&
+                    !SIZE.matches(t) && !SECTION.matches(t) && !DROP.containsMatchIn(t) &&
+                    !Regex("^(ITM|UPC|ASG|PLU)", RegexOption.IGNORE_CASE).containsMatchIn(t)
+            }
+            .sortedWith(compareBy({ it.cy }, { it.x }))
             .joinToString(" ") { it.text.trim() }
             .replace(Regex("\\s+"), " ")
             .trim()
