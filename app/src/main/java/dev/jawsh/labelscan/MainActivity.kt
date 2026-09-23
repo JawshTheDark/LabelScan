@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import dev.jawsh.labelscan.ui.DetailScreen
 import dev.jawsh.labelscan.ui.LibraryScreen
+import dev.jawsh.labelscan.ui.OrderReviewScreen
 import dev.jawsh.labelscan.ui.ReviewScreen
 import dev.jawsh.labelscan.ui.ScanScreen
 
@@ -64,8 +65,10 @@ private fun App(vm: AppViewModel) {
         val m = Modifier.padding(pad)
         when (screen) {
             Screen.Library -> LibraryScreen(vm, m)
-            Screen.Scan -> ScanScreen(vm, m)
+            Screen.Scan -> ScanScreen(vm, m, orderSheet = false)
+            Screen.ScanSheet -> ScanScreen(vm, m, orderSheet = true)
             is Screen.Review -> ReviewScreen(vm, screen, m)
+            is Screen.OrderReview -> OrderReviewScreen(vm, screen, m)
             is Screen.Detail -> DetailScreen(vm, screen.upc, m)
         }
     }

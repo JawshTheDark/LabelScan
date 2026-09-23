@@ -62,27 +62,31 @@ import dev.jawsh.labelscan.data.Photos
 import java.util.concurrent.Executors
 
 @Composable
-fun ScanScreen(vm: AppViewModel, modifier: Modifier) {
+fun ScanScreen(vm: AppViewModel, modifier: Modifier, orderSheet: Boolean = false) {
     val ctx = LocalContext.current
     var granted by remember {
         mutableStateOf(ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        uri?.let(vm::processUri)
+        uri?.let { if (orderSheet) vm.processOrderSheetUri(it) else vm.processUri(it) }
     }
     val pickPhoto = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
 
     Box(modifier.fillMaxSize().background(Color.Black)) {
         if (granted) {
-            CameraView(vm, pickPhoto)
+            CameraView(vm, pickPhoto, orderSheet)
         } else {
             Column(
                 Modifier.align(Alignment.Center).padding(32.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("Camera access is needed to photograph labels.", color = Color.White, textAlign = TextAlign.Center)
+                Text(
+                    if (orderSheet) "Camera access is needed to photograph order sheets."
+                    else "Camera access is needed to photograph labels.",
+                    color = Color.White, textAlign = TextAlign.Center,
+                )
                 Button(onClick = { permission.launch(Manifest.permission.CAMERA) }) { Text("Allow camera") }
                 OutlinedButton(onClick = pickPhoto) { Text("Pick an existing photo", color = Color.White) }
             }
@@ -98,7 +102,7 @@ fun ScanScreen(vm: AppViewModel, modifier: Modifier) {
             ) {
                 CircularProgressIndicator()
                 Spacer(Modifier.height(16.dp))
-                Text("Reading label…", color = Color.White)
+                Text(if (orderSheet) "Reading order sheet…" else "Reading label…", color = Color.White)
             }
         }
     }
@@ -106,7 +110,7 @@ fun ScanScreen(vm: AppViewModel, modifier: Modifier) {
 
 @SuppressLint("ClickableViewAccessibility")
 @Composable
-private fun CameraView(vm: AppViewModel, pickPhoto: () -> Unit) {
+private fun CameraView(vm: AppViewModel, pickPhoto: () -> Unit, orderSheet: Boolean) {
     val ctx = LocalContext.current
     val owner = LocalLifecycleOwner.current
     val previewView = remember { PreviewView(ctx) }
@@ -147,7 +151,9 @@ private fun CameraView(vm: AppViewModel, pickPhoto: () -> Unit) {
             override fun onCaptureSuccess(image: ImageProxy) {
                 val rotation = image.imageInfo.rotationDegrees
                 val bitmap = image.use { Photos.rotate(Photos.scaleDown(it.toBitmap(), Photos.OCR_MAX_PX), rotation) }
-                ContextCompat.getMainExecutor(ctx).execute { vm.process(bitmap) }
+                ContextCompat.getMainExecutor(ctx).execute {
+                    if (orderSheet) vm.processOrderSheet(bitmap) else vm.process(bitmap)
+                }
             }
 
             override fun onError(exception: ImageCaptureException) {
@@ -166,7 +172,8 @@ private fun CameraView(vm: AppViewModel, pickPhoto: () -> Unit) {
                 .border(BorderStroke(2.dp, Color(0xCCFFB300)), RoundedCornerShape(12.dp)),
         )
         Text(
-            "Fill the frame with the label — any angle works.\nTap to focus.",
+            if (orderSheet) "Fill the frame with one order-sheet page.\nHold it upright and flat. Tap to focus."
+            else "Fill the frame with the label — any angle works.\nTap to focus.",
             color = Color.White,
             textAlign = TextAlign.Center,
             modifier = Modifier.align(Alignment.TopCenter).padding(top = 56.dp)

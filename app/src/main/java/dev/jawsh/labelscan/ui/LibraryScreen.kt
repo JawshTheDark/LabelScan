@@ -66,6 +66,10 @@ fun LibraryScreen(vm: AppViewModel, modifier: Modifier) {
                 actions = {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "Menu") }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("Import order sheet") }, onClick = {
+                            menu = false
+                            vm.screen = Screen.ScanSheet
+                        })
                         DropdownMenuItem(text = { Text("Export CSV") }, onClick = {
                             menu = false
                             scope.launch { ctx.startActivity(Intent.createChooser(vm.exportIntent(), "Export UPCs")) }
@@ -92,7 +96,7 @@ fun LibraryScreen(vm: AppViewModel, modifier: Modifier) {
             )
             if (vm.products.isEmpty()) {
                 Text(
-                    if (vm.query.isEmpty()) "No UPCs yet.\nTap Scan and photograph a case label."
+                    if (vm.query.isEmpty()) "No UPCs yet.\nScan a label, or ⋮ → Import order sheet."
                     else "Nothing matches \"${vm.query}\".",
                     Modifier.padding(24.dp),
                     style = MaterialTheme.typography.bodyLarge,

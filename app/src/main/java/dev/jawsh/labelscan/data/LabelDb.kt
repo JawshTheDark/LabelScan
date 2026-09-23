@@ -24,6 +24,25 @@ data class Product(
     val lastSeen: Long = 0,
 )
 
+/** What a stored photo shows, so the gallery can label and group shots. */
+enum class PhotoKind(val label: String) {
+    ILC("ILC"), PLU("PLU"), PACKAGING("Packaging"), ORDER("Order sheet"), OTHER("Other");
+
+    companion object {
+        fun from(name: String?) = entries.firstOrNull { it.name == name } ?: OTHER
+    }
+}
+
+/** An extra picture attached to a product (PLU tag, packaging, ILC, …). */
+data class Photo(
+    val id: Long,
+    val upc: String,
+    val kind: PhotoKind,
+    val path: String,
+    val note: String,
+    val createdAt: Long,
+)
+
 /** One physical case that came in, i.e. one scanned label. */
 data class Receipt(
     val id: Long,
@@ -38,9 +57,10 @@ data class Receipt(
     val scannedAt: Long,
 )
 
-class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null, 2) {
+class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null, 3) {
 
     override fun onCreate(db: SQLiteDatabase) {
+        createPhotoTable(db)
         db.execSQL(
             """CREATE TABLE product(
                 upc TEXT PRIMARY KEY,
@@ -74,11 +94,25 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
         db.execSQL("CREATE INDEX receipt_case ON receipt(case_id)")
     }
 
+    private fun createPhotoTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE photo(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                upc TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'OTHER',
+                path TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL)"""
+        )
+        db.execSQL("CREATE INDEX photo_upc ON photo(upc)")
+    }
+
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) {
             db.execSQL("ALTER TABLE product ADD COLUMN plu TEXT NOT NULL DEFAULT ''")
             completeCheckDigits(db)
         }
+        if (oldVersion < 3) createPhotoTable(db)
     }
 
     /**
@@ -183,6 +217,7 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
                 }
                 db.delete("product", "upc = ?", arrayOf(oldUpc))
                 db.update("receipt", ContentValues().apply { put("upc", p.upc) }, "upc = ?", arrayOf(oldUpc))
+                db.update("photo", ContentValues().apply { put("upc", p.upc) }, "upc = ?", arrayOf(oldUpc))
             }
             db.insertWithOnConflict("product", null, merged.toValues(), SQLiteDatabase.CONFLICT_REPLACE)
             db.setTransactionSuccessful()
@@ -191,20 +226,47 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
         }
     }
 
-    /** Deletes a product and its receipts; returns the photo paths that are now unused. */
+    /** Extra photos attached to a product, newest first. */
+    fun photos(upc: String): List<Photo> =
+        readableDatabase.rawQuery("SELECT * FROM photo WHERE upc = ? ORDER BY created_at DESC", arrayOf(upc))
+            .use { c -> buildList { while (c.moveToNext()) add(c.toPhoto()) } }
+
+    fun addPhoto(upc: String, kind: PhotoKind, path: String, note: String = "", now: Long = System.currentTimeMillis()) {
+        writableDatabase.insert("photo", null, ContentValues().apply {
+            put("upc", upc)
+            put("kind", kind.name)
+            put("path", path)
+            put("note", note)
+            put("created_at", now)
+        })
+    }
+
+    /** Deletes one attached photo and returns its file path so the caller can remove it. */
+    fun deletePhoto(id: Long): String? {
+        val path = readableDatabase.rawQuery("SELECT path FROM photo WHERE id = ?", arrayOf(id.toString()))
+            .use { if (it.moveToFirst()) it.getString(0) else null }
+        writableDatabase.delete("photo", "id = ?", arrayOf(id.toString()))
+        return path
+    }
+
+    /** Deletes a product with its receipts and photos; returns the file paths that are now unused. */
     fun deleteProduct(upc: String): List<String> {
-        val photos = receipts(upc).map { it.photo }.filter { it.isNotEmpty() }
+        val files = (receipts(upc).map { it.photo } + photos(upc).map { it.path }).filter { it.isNotEmpty() }
         val db = writableDatabase
         db.beginTransaction()
         try {
             db.delete("receipt", "upc = ?", arrayOf(upc))
+            db.delete("photo", "upc = ?", arrayOf(upc))
             db.delete("product", "upc = ?", arrayOf(upc))
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
         }
-        return photos
+        return files
     }
+
+    /** Adds catalog rows read from an order sheet; fills blanks on any that already exist. */
+    fun importOrderRows(rows: List<Product>): Int = import(rows)
 
     /** Merges imported rows: non-blank imported text wins, counts and dates widen. */
     fun import(products: List<Product>): Int {
@@ -269,6 +331,15 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
         timesSeen = long("times_seen").toInt(),
         firstSeen = long("first_seen"),
         lastSeen = long("last_seen"),
+    )
+
+    private fun Cursor.toPhoto() = Photo(
+        id = long("id"),
+        upc = str("upc"),
+        kind = PhotoKind.from(str("kind")),
+        path = str("path"),
+        note = str("note"),
+        createdAt = long("created_at"),
     )
 
     private fun Cursor.toReceipt() = Receipt(
