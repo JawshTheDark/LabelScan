@@ -77,8 +77,10 @@ object OrderSheetParser {
             val midBottom = if (i == anchors.lastIndex) bc.cy + rowH else (bc.cy + anchors[i + 1].cy) / 2f
             val top = maxOf(midTop, bc.cy - rowH * 1.3f)
             val bottom = minOf(midBottom, bc.cy + rowH * 1.3f)
-            // Row text is left of the barcode column (pack/status sit to its right).
-            val band = texts.filter { it.cy > top && it.cy <= bottom && it.cx < bc.cx + bc.w * 0.3f }
+            // Full-width row band: don't assume which side of the barcode the description
+            // is on (the page can settle at 180°). The pack/status/number columns are
+            // dropped by content, so the only real letter text left is the name.
+            val band = texts.filter { it.cy > top && it.cy <= bottom }
             buildRow(bc, band, sections)
         }
     }
@@ -88,11 +90,13 @@ object OrderSheetParser {
         val cells = band.map { it.text.trim() }
             .filter { it.isNotEmpty() && !DROP.containsMatchIn(it) && !MONEY.matches(it) && !SECTION.matches(it) }
 
-        // Description lines: letter-bearing, left of the barcode, not a size/section/field/status code.
+        // Description lines: letter-bearing, not a size/section/field/status code, and
+        // mostly letters (skips "1 4 20", "ACT", stray codes). Wrapped names join in order.
         val name = band
             .filter { tb ->
                 val t = tb.text.trim()
-                tb.cx < bc.cx && t.count(Char::isLetter) >= 3 &&
+                val letters = t.count(Char::isLetter)
+                letters >= 3 && letters >= t.count { !it.isWhitespace() } * 0.6 &&
                     !SIZE.matches(t) && !SECTION.matches(t) && !DROP.containsMatchIn(t) &&
                     !Regex("^(ITM|UPC|ASG|PLU)", RegexOption.IGNORE_CASE).containsMatchIn(t)
             }
