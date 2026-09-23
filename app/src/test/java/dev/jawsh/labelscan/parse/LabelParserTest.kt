@@ -158,6 +158,47 @@ class LabelParserTest {
         assertEquals("041250999348", d.upc)
     }
 
+    @Test fun nameWrapsFromHeaderBarToNextLine() {
+        // FREDERIKS label: brand in the header bar, product description wraps below.
+        val lines = listOf(
+            "B7-37-U 11 of 12 FREDERIKS BY MEIJER",
+            "BUTTER MINI CROISSA M010/Q001 09/19",
+            "ITM454940 9.9 OZ",
+            "ASG#1092361037",
+            "UPC#70882081649",
+            "BKY",
+        )
+        val d = LabelParser.parse(lines)
+        assertEquals("FREDERIKS BY MEIJER BUTTER MINI CROISSA", d.name)
+        assertEquals("708820816497", d.upc)
+        assertEquals("9.9 OZ", d.size)
+    }
+
+    @Test fun boxHandlingInstructionsAreNotTheName() {
+        // Label tiny/upside-down; big carton instructions dominate the frame.
+        val lines = listOf(
+            "MOVE FROM FREEZER, PLACE PRODUCT ON LINED SHEET",
+            "AT IN OVEN AT 375F FOR 14 MINUTES BEFORE FINISHING",
+            "THIS SIDE UP",
+            "0 of 0 DONUT FENCE PLAN 96CT",
+            "ITM600976 3 OZ",
+            "ASG#219704845",
+        )
+        val d = LabelParser.parse(lines)
+        assertEquals("DONUT FENCE PLAN", d.name)
+        assertEquals("3 OZ", d.size)
+        assertEquals("219704845", d.asg)
+    }
+
+    @Test fun withoutANameLineTheNameStaysBlankNotInstructions() {
+        val lines = listOf(
+            "MOVE FROM FREEZER, PLACE PRODUCT ON LINED SHEET",
+            "PREHEAT OVEN TO 375 DEGREES FOR 14 MINUTES",
+            "ITM600976 3 OZ",
+        )
+        assertEquals("", LabelParser.parse(lines).name)
+    }
+
     @Test fun emptyInputGivesEmptyData() {
         val d = LabelParser.parse(emptyList())
         assertEquals("", d.upc)

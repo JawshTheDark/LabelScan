@@ -90,11 +90,37 @@ object LabelParser {
     /** Lines that are never the product name. */
     private val NOT_NAME = Regex(
         "^(NO PRIMARY|REG PRICE|SELL BY|BEST BY|USE BY|PACKED ON|INGREDIENTS|CONTAINS|KEEP |DIST\\.? BY|" +
+            // Box handling / prep instructions printed large on cartons
+            "MOVE FROM|THIS SIDE|PLACE PRODUCT|PRODUCT ON|DO NOT|PERISHABLE|FRAGILE|HANDLE|THAW|" +
+            "PREHEAT|BAKE|OVEN|MINUTES|MINUTE|INSTRUCTIONS|LINED SHEET|REMOVE|STORE AT|FROZEN|REFRIGERAT|" +
             // Nutrition facts panel
             "NUTRITION|SERVING|AMOUNT PER|CALORIES|TOTAL |SATURATED|TRANS FAT|CHOLESTEROL|SODIUM|DIETARY|" +
             "SUGAR|PROTEIN|VITAMIN|CALCIUM|IRON|POTASSIUM|NOT A SIGNIFICANT|PERCENT DAILY|\\* )",
         RegexOption.IGNORE_CASE,
     )
+    private val CASE_NAME = Regex("""\b\d{1,3}\s+[oO0][fF]\s+\d{1,3}\s+(.+)""")
+    /** Non-descriptive tokens that turn up mixed into name lines. */
+    private val NAME_STOP = setOf(
+        "CASE", "EACH", "NEW", "AD", "THIS", "SIDE", "UP", "DOWN", "LOT", "EXP", "MFG", "REF",
+        "OZ", "LB", "LBS", "CT", "PK", "EA", "KG", "ML", "G", "L", "GAL", "FLOZ",
+    )
+
+    /**
+     * Keeps only real description words from a line: drops field codes (ITM/UPC/ASG/M###/Q###),
+     * sizes, dates, pure numbers, punctuation-bearing tokens and OCR noise like "0Z".
+     */
+    private fun descriptionTokens(s: String): List<String> = s.split(' ').mapNotNull { t ->
+        val up = t.uppercase()
+        val letters = t.count { it.isLetter() }
+        when {
+            t.length < 2 || up in NAME_STOP -> null
+            t.any { it in "/#$%,.;" } -> null
+            Regex("^(ITM|UPC|ASG|PLU)", RegexOption.IGNORE_CASE).containsMatchIn(t) -> null
+            SIZE.matches(t) -> null
+            letters < 2 || letters.toFloat() / t.length < 0.6f -> null
+            else -> t
+        }
+    }
 
     fun parse(lines: List<String>, barcodes: List<ScannedBarcode> = emptyList()): LabelData =
         parseLines(lines.map { OcrLine(it) }, barcodes)
@@ -121,8 +147,7 @@ object LabelParser {
             upcSource = upc.source,
             upcPrinted = upc.printed.takeIf { it != upc.code } ?: "",
             itemNo = ITEM.find(text)?.let { Gtin.digitize(it.groupValues[1]) }?.takeIf { '?' !in it } ?: "",
-            size = SIZE.find(text)?.let { formatSize(it) }
-                ?: PACK.find(text)?.let { "${it.groupValues[1]}/CS" } ?: "",
+            size = findSize(text) ?: PACK.find(text)?.let { "${it.groupValues[1]}/CS" } ?: "",
             dept = findDept(clean),
             plu = PLU.find(text)?.groupValues?.get(1) ?: "",
             slot = SLOT.find(text)?.groupValues?.drop(1)?.joinToString("-") ?: "",
@@ -133,6 +158,15 @@ object LabelParser {
             asg = asg,
             rawText = text,
         )
+    }
+
+    private val WEIGHT_UNITS = setOf("OZ", "FLOZ", "LB", "LBS", "G", "KG", "ML", "L", "GAL")
+
+    /** Prefers a weight/volume size (3 OZ) over a count (96 CT) when both appear. */
+    private fun findSize(text: String): String? {
+        val all = SIZE.findAll(text).toList()
+        val weight = all.firstOrNull { it.groupValues[2].uppercase().replace(" ", "") in WEIGHT_UNITS }
+        return (weight ?: all.firstOrNull())?.let { formatSize(it) }
     }
 
     private fun formatSize(m: MatchResult): String {
@@ -191,6 +225,8 @@ object LabelParser {
     private fun wordy(raw: String): String? {
         if (NOT_NAME.containsMatchIn(raw)) return null
         if (Regex("""^(UPC|ITM|ASG|PLU)""").containsMatchIn(raw)) return null
+        // Product names have no sentence punctuation; commas/periods mark instructions or ingredient lists.
+        if (raw.any { it == ',' || it == ';' } || Regex("""[a-z]\.\s|\.$""").containsMatchIn(raw)) return null
         val stripped = raw.replace(CASE, " ").replace(DOOR, " ").replace(SLOT, " ")
         val tokens = stripped.split(' ').filter { t -> t.isNotEmpty() && t.none { it in "/#$%" } }
             .dropWhile { t -> t.none { it.isLetter() } }
@@ -211,15 +247,33 @@ object LabelParser {
      * ingredient lists are long but tiny).
      */
     private fun findName(lines: List<OcrLine>): String {
+        // Strongest signal on DC case labels: the product name trails the "N of M"
+        // marker in the header bar ("… 11 of 12 FREDERIKS BY MEIJER"), and often
+        // wraps onto the next line ("BUTTER MINI CROISSA …") — capture both.
+        lines.forEachIndexed { i, l ->
+            val head = CASE_NAME.find(l.text)?.groupValues?.get(1)?.let { descriptionTokens(it) }.orEmpty()
+            if (head.isNotEmpty()) {
+                val parts = head.toMutableList()
+                for (j in (i + 1)..minOf(i + 2, lines.lastIndex)) {
+                    if (NOT_NAME.containsMatchIn(lines[j].text)) continue
+                    val cont = descriptionTokens(lines[j].text)
+                    if (cont.size >= 2) { parts += cont; break }
+                }
+                return parts.joinToString(" ")
+            }
+        }
+
         val heights = lines.map { it.height }.filter { it > 0 }.sorted()
         val median = heights.getOrNull(heights.size / 2) ?: 0f
         fun rel(line: OcrLine) = if (median > 0 && line.height > 0) line.height / median else 1f
 
         val best = lines.indices.mapNotNull { i ->
             val s = wordy(lines[i].text) ?: return@mapNotNull null
-            val base = s.count { it.isLetter() } - 2 * s.count { it.isDigit() }
-            val scale = rel(lines[i]).coerceIn(0.3f, 3f)
-            Triple(i, s, base * scale * scale)
+            // A product name is short and clean; long lines are almost always instructions.
+            val lengthPenalty = (s.length - 30).coerceAtLeast(0)
+            val base = s.count { it.isLetter() } - 2 * s.count { it.isDigit() } - lengthPenalty
+            val scale = rel(lines[i]).coerceIn(0.4f, 1.8f)
+            Triple(i, s, base * scale)
         }.maxByOrNull { it.third }?.takeIf { it.third > 0 } ?: return ""
 
         // A headline in big type often wraps ("FFM TURNOVERS" / "APPLE 4CT"): take the
