@@ -12,8 +12,8 @@ android {
         applicationId = "dev.jawsh.labelscan"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.4.0"
+        versionCode = 8
+        versionName = "0.4.1"
         // 64-bit ARM phones only; the bundled ML Kit models otherwise ship per ABI.
         ndk { abiFilters += listOf("arm64-v8a") }
     }

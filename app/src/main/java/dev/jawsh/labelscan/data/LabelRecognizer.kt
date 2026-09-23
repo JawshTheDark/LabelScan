@@ -63,25 +63,50 @@ class LabelRecognizer {
         val texts = ArrayList<TextBox>()
         val boxes = ArrayList<BarcodeBox>()
         val h = upright.height
-        val tiles = 4
-        val tileH = h / tiles
-        val overlap = tileH / 4
+        val w = upright.width
+
+        // Text: full-width horizontal strips keep each line intact.
+        val strips = 4
+        val stripH = h / strips
         var y = 0
         while (y < h) {
-            val th = minOf(tileH + overlap, h - y)
+            val th = minOf(stripH + stripH / 4, h - y)
             if (th < 40) break
-            val tile = Bitmap.createBitmap(upright, 0, y, upright.width, th)
-            val img = InputImage.fromBitmap(tile, 0)
-            runCatching { text.process(img).await() }.getOrNull()?.textBlocks
+            val tile = Bitmap.createBitmap(upright, 0, y, w, th)
+            runCatching { text.process(InputImage.fromBitmap(tile, 0)).await() }.getOrNull()?.textBlocks
                 ?.flatMap { it.lines }?.forEach { line ->
                     val r = line.boundingBox ?: return@forEach
                     texts += TextBox(line.text, r.left, r.top + y, r.width(), r.height())
                 }
-            runCatching { barcodes.process(img).await() }.getOrNull()?.forEach { b ->
-                val r = b.boundingBox ?: return@forEach
-                b.rawValue?.let { boxes += BarcodeBox(it, r.left, r.top + y, r.width(), r.height()) }
+            tile.recycle()
+            y += stripH
+        }
+
+        // Barcodes: a fine grid so each small Code-128 is large relative to its tile —
+        // the single biggest lever on how many rows come back. Whole-page pass first.
+        runCatching { barcodes.process(InputImage.fromBitmap(upright, 0)).await() }.getOrNull()
+            ?.forEach { b -> b.boundingBox?.let { r -> b.rawValue?.let { boxes += BarcodeBox(it, r.left, r.top, r.width(), r.height()) } } }
+        val cols = 2
+        val rows = (h / 380).coerceIn(4, 12) // ~2–3 barcode-heights per tile
+        val cw = w / cols
+        val ch = h / rows
+        val ox = cw / 5
+        val oy = ch / 3
+        for (r in 0 until rows) {
+            for (c in 0 until cols) {
+                val x0 = (c * cw - ox).coerceAtLeast(0)
+                val y0 = (r * ch - oy).coerceAtLeast(0)
+                val tw = minOf(cw + 2 * ox, w - x0)
+                val thh = minOf(ch + 2 * oy, h - y0)
+                if (tw < 40 || thh < 40) continue
+                val tile = Bitmap.createBitmap(upright, x0, y0, tw, thh)
+                runCatching { barcodes.process(InputImage.fromBitmap(tile, 0)).await() }.getOrNull()
+                    ?.forEach { b ->
+                        val bb = b.boundingBox ?: return@forEach
+                        b.rawValue?.let { boxes += BarcodeBox(it, bb.left + x0, bb.top + y0, bb.width(), bb.height()) }
+                    }
+                tile.recycle()
             }
-            y += tileH
         }
 
         // Overlap re-reads the seam; keep one barcode per value and drop duplicate text lines.
