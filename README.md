@@ -22,10 +22,19 @@ several years.
    digits so you can compare them with the photo. If a retail barcode is in
    the shot it's read directly and wins. Fix anything and hit
    **Save + next** to go straight to the next box.
-3. **Repository** — one entry per UPC with name, item #, size, category, dept,
+3. **Order sheets** — ⋮ → *Import order sheet*, then photograph a
+   distribution order-book page. Every row's barcode is read exactly and its
+   check digit added; the descriptions come from OCR. Review the list, tick the
+   rows you want, and import them all at once. Great for building the catalog
+   fast without a box in hand.
+4. **Photos per item** — open any item and tap **Add** to attach more
+   pictures, each tagged **ILC**, **PLU**, **Packaging**, **Order sheet** or
+   **Other** — from the camera or the gallery (many at once). A PLU shot fills a
+   blank PLU automatically. Everything shows in the item's gallery.
+5. **Repository** — one entry per UPC with name, item #, size, category, dept,
    last slot, and how many cases you've seen. Scanning the same product again
    bumps its count; scanning the *same case* twice (same case barcode) warns you.
-4. **Inventory** — search by any fragment of name, UPC, item #, slot or dept.
+6. **Inventory** — search by any fragment of name, UPC, item #, slot or dept.
    Open a product and its UPC is drawn as a **real UPC-A/EAN-13 barcode** at
    full screen brightness, so your inventory scan gun can read it straight off
    the phone.

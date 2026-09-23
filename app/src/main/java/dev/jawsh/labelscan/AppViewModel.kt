@@ -13,10 +13,12 @@ import androidx.lifecycle.viewModelScope
 import dev.jawsh.labelscan.data.LabelDb
 import dev.jawsh.labelscan.data.LabelRecognizer
 import dev.jawsh.labelscan.data.Photos
+import dev.jawsh.labelscan.data.PhotoKind
 import dev.jawsh.labelscan.data.Product
 import dev.jawsh.labelscan.data.ProductCsv
 import dev.jawsh.labelscan.parse.Gtin
 import dev.jawsh.labelscan.parse.LabelData
+import dev.jawsh.labelscan.parse.OrderRow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
@@ -28,7 +30,9 @@ import java.util.Locale
 sealed interface Screen {
     data object Library : Screen
     data object Scan : Screen
+    data object ScanSheet : Screen
     data class Review(val label: LabelData, val photo: String) : Screen
+    data class OrderReview(val rows: List<OrderRow>) : Screen
     data class Detail(val upc: String) : Screen
 }
 
@@ -108,7 +112,93 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                 existed
             }
             say(if (known) "Updated ${label.name.ifBlank { label.upc }}" else "Added ${label.name.ifBlank { label.upc }}")
-            screen = if (scanNext) Screen.Scan else Screen.Library
+            // Plain Save lands on the item so more photos can be piled on; "next" goes back to the camera.
+            screen = if (scanNext) Screen.Scan else Screen.Detail(label.upc)
+            refresh()
+        }
+    }
+
+    /** Reads a whole order-book page into reviewable catalog rows. */
+    fun processOrderSheet(bitmap: Bitmap) {
+        if (busy) return
+        busy = true
+        viewModelScope.launch {
+            try {
+                val rows = withContext(Dispatchers.Default) { recognizer.readOrderSheet(bitmap) }
+                if (rows.isEmpty()) {
+                    say("No rows found — fill the frame with the page, held upright")
+                } else {
+                    screen = Screen.OrderReview(rows)
+                }
+            } catch (e: Exception) {
+                say("Couldn't read the sheet: ${e.message}")
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    fun processOrderSheetUri(uri: Uri) {
+        viewModelScope.launch {
+            val bmp = withContext(Dispatchers.IO) { runCatching { Photos.load(app, uri) }.getOrNull() }
+            if (bmp == null) say("Couldn't open that image") else processOrderSheet(bmp)
+        }
+    }
+
+    fun saveOrderRows(products: List<Product>) {
+        viewModelScope.launch {
+            val n = withContext(Dispatchers.IO) { db.importOrderRows(products) }
+            say("Imported $n item${if (n == 1) "" else "s"}")
+            screen = Screen.Library
+            refresh()
+        }
+    }
+
+    /** Attaches gallery images to a product, tagging their kind; a PLU shot fills a blank PLU. */
+    fun addPhotoUris(upc: String, uris: List<Uri>, kind: PhotoKind) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            val n = withContext(Dispatchers.IO) {
+                var count = 0
+                for (uri in uris) {
+                    val bmp = runCatching { Photos.load(app, uri) }.getOrNull() ?: continue
+                    db.addPhoto(upc, kind, Photos.store(app, bmp))
+                    if (kind == PhotoKind.PLU) fillFromPlu(upc, bmp)
+                    count++
+                }
+                count
+            }
+            say(if (n > 0) "Added $n photo${if (n == 1) "" else "s"}" else "Couldn't add those photos")
+            refresh()
+        }
+    }
+
+    fun addPhotoBitmap(upc: String, bitmap: Bitmap, kind: PhotoKind) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                db.addPhoto(upc, kind, Photos.store(app, bitmap))
+                if (kind == PhotoKind.PLU) fillFromPlu(upc, bitmap)
+            }
+            say("Added ${kind.label} photo")
+            refresh()
+        }
+    }
+
+    /** Reads a PLU tag and fills the product's PLU/name if they're still blank. */
+    private suspend fun fillFromPlu(upc: String, bitmap: Bitmap) {
+        val label = runCatching { recognizer.read(bitmap) }.getOrNull() ?: return
+        val p = db.product(upc) ?: return
+        val updated = p.copy(
+            plu = p.plu.ifBlank { label.plu },
+            name = p.name.ifBlank { label.name },
+        )
+        if (updated != p) db.updateProduct(upc, updated)
+    }
+
+    fun removePhoto(id: Long) {
+        viewModelScope.launch {
+            val path = withContext(Dispatchers.IO) { db.deletePhoto(id) }
+            path?.let { withContext(Dispatchers.IO) { File(it).delete() } }
             refresh()
         }
     }
