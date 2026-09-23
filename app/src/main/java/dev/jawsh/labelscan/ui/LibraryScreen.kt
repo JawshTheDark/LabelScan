@@ -66,7 +66,7 @@ fun LibraryScreen(vm: AppViewModel, modifier: Modifier) {
                 actions = {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "Menu") }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text("Import order sheet") }, onClick = {
+                        DropdownMenuItem(text = { Text("Scan order/report sheet") }, onClick = {
                             menu = false
                             vm.screen = Screen.ScanSheet
                         })

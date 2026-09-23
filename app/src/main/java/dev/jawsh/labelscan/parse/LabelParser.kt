@@ -101,15 +101,17 @@ object LabelParser {
     private val CASE_NAME = Regex("""\b\d{1,3}\s+[oO0][fF]\s+\d{1,3}\s+(.+)""")
     /** Non-descriptive tokens that turn up mixed into name lines. */
     private val NAME_STOP = setOf(
-        "CASE", "EACH", "NEW", "AD", "THIS", "SIDE", "UP", "DOWN", "LOT", "EXP", "MFG", "REF",
+        "CASE", "EACH", "NEW", "AD", "THIS", "SIDE", "UP", "DOWN", "LOT", "EXP", "MFG", "REF", "OF",
         "OZ", "LB", "LBS", "CT", "PK", "EA", "KG", "ML", "G", "L", "GAL", "FLOZ",
     )
 
     /**
-     * Keeps only real description words from a line: drops field codes (ITM/UPC/ASG/M###/Q###),
-     * sizes, dates, pure numbers, punctuation-bearing tokens and OCR noise like "0Z".
+     * Keeps only real description words from a line: strips the "N of M" count,
+     * door/slot codes, field codes (ITM/UPC/ASG/M###/Q###), sizes, dates, pure
+     * numbers, punctuation-bearing tokens and OCR noise like "0Z".
      */
-    private fun descriptionTokens(s: String): List<String> = s.split(' ').mapNotNull { t ->
+    private fun descriptionTokens(raw: String): List<String> =
+        raw.replace(CASE, " ").replace(DOOR, " ").replace(SLOT, " ").split(' ').mapNotNull { t ->
         val up = t.uppercase()
         val letters = t.count { it.isLetter() }
         when {
@@ -277,17 +279,20 @@ object LabelParser {
         }.maxByOrNull { it.third }?.takeIf { it.third > 0 } ?: return ""
 
         // A headline in big type often wraps ("FFM TURNOVERS" / "APPLE 4CT"): take the
-        // following lines of the same size too. Case labels print everything one size, so skip there.
-        var name = best.second
+        // following lines of the same size too — but only their description words, so a
+        // stray "1 of 1" or slot code on a same-size line never lands in the name.
+        val parts = mutableListOf(best.second)
         val h = lines[best.first].height
         if (rel(lines[best.first]) >= 1.5f) {
             for (next in lines.drop(best.first + 1)) {
                 if (next.height !in h * 0.8f..h * 1.25f) break
-                if (NOT_NAME.containsMatchIn(next.text) || next.text.any { it in "/#$%" }) break
-                name += " " + next.text
+                if (NOT_NAME.containsMatchIn(next.text)) break
+                val cont = descriptionTokens(next.text)
+                if (cont.isEmpty()) break
+                parts += cont.joinToString(" ")
             }
         }
-        return name
+        return parts.joinToString(" ")
     }
 
     /** A secondary "DOUGH 21 OZ"-style line: words followed by a size. */

@@ -138,7 +138,7 @@ class LabelParserTest {
             OcrLine("Contains: Wheat, Soy", 18f),
         )
         val d = LabelParser.parseLines(lines)
-        assertEquals("FFM TURNOVERS APPLE 4CT", d.name)
+        assertEquals("FFM TURNOVERS APPLE", d.name)
         assertEquals("4 CT", d.size)
     }
 
@@ -172,6 +172,21 @@ class LabelParserTest {
         assertEquals("FREDERIKS BY MEIJER BUTTER MINI CROISSA", d.name)
         assertEquals("708820816497", d.upc)
         assertEquals("9.9 OZ", d.size)
+    }
+
+    @Test fun caseCountOnSameSizeLineIsNotAppendedToName() {
+        // Headline wrap must not swallow a "1 of 1" printed at the same size.
+        val lines = listOf(
+            OcrLine("SNACK PACK MINI", 46f),
+            OcrLine("1 of 1", 45f),
+            OcrLine("W-ML-30-07-020", 45f),
+            OcrLine("UPC#70882081649", 18f),
+        )
+        assertEquals("SNACK PACK MINI", LabelParser.parseLines(lines).name)
+    }
+
+    @Test fun caseCountMergedIntoNameLineIsStripped() {
+        assertEquals("SNACK PACK MINI", LabelParser.parse(listOf("SNACK PACK MINI 1 of 1")).name)
     }
 
     @Test fun boxHandlingInstructionsAreNotTheName() {

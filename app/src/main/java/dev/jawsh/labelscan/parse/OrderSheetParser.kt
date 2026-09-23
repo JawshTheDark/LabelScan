@@ -87,10 +87,16 @@ object OrderSheetParser {
         val leftEdge = band.minOfOrNull { it.x } ?: 0
         val span = ((band.maxOfOrNull { it.right } ?: bc.x) - leftEdge).coerceAtLeast(1)
 
-        // Description = letter-bearing lines in the left ~55%, stacked top-to-bottom.
-        val name = band
-            .filter { it.text.trim().count(Char::isLetter) >= 3 && !SIZE.matches(it.text.trim()) && !SECTION.matches(it.text.trim()) }
-            .filter { it.cx - leftEdge < span * 0.55f }
+        // Description lines: letter-bearing, not a size/section/field code.
+        val descLines = band.filter { tb ->
+            val t = tb.text.trim()
+            t.count(Char::isLetter) >= 3 && !SIZE.matches(t) && !SECTION.matches(t) &&
+                !Regex("^(ITM|UPC|ASG|PLU)", RegexOption.IGNORE_CASE).containsMatchIn(t)
+        }
+        // Prefer the left column, but if column geometry is off, fall back to all description lines
+        // so a row still gets a name instead of coming back blank.
+        val leftCol = descLines.filter { it.cx - leftEdge < span * 0.6f }
+        val name = (leftCol.ifEmpty { descLines })
             .sortedBy { it.cy }
             .joinToString(" ") { it.text.trim() }
             .replace(Regex("\\s+"), " ")

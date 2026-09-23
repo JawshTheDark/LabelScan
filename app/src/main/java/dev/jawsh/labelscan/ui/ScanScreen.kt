@@ -172,7 +172,7 @@ private fun CameraView(vm: AppViewModel, pickPhoto: () -> Unit, orderSheet: Bool
                 .border(BorderStroke(2.dp, Color(0xCCFFB300)), RoundedCornerShape(12.dp)),
         )
         Text(
-            if (orderSheet) "Fill the frame with one order-sheet page.\nHold it upright and flat. Tap to focus."
+            if (orderSheet) "Fill the frame with one order or throwaway sheet.\nHold it upright and flat. Tap to focus."
             else "Fill the frame with the label — any angle works.\nTap to focus.",
             color = Color.White,
             textAlign = TextAlign.Center,

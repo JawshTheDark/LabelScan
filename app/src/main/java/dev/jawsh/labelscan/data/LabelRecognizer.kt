@@ -14,6 +14,7 @@ import dev.jawsh.labelscan.parse.OcrLine
 import dev.jawsh.labelscan.parse.OrderRow
 import dev.jawsh.labelscan.parse.OrderSheetParser
 import dev.jawsh.labelscan.parse.ScannedBarcode
+import dev.jawsh.labelscan.parse.TextTableParser
 import dev.jawsh.labelscan.parse.TextBox
 import kotlinx.coroutines.tasks.await
 import kotlin.math.hypot
@@ -50,36 +51,96 @@ class LabelRecognizer {
     }
 
     /**
-     * Reads every catalog row off a photographed order-book page. Picks the page
-     * rotation that exposes the most numeric barcodes, then anchors rows on them.
+     * Reads every catalog row off a photographed order-book page. Orientation is
+     * chosen by how much *text* comes back upright (barcodes decode at any angle,
+     * so they can't tell us which way is up), then the page is processed in
+     * overlapping horizontal tiles so each small barcode and description line is
+     * read at higher effective resolution — a full page at once loses most of them.
      */
     suspend fun readOrderSheet(bitmap: Bitmap): List<OrderRow> {
-        var chosen: Bitmap = bitmap
-        var bestBarcodes = listOf<Barcode>()
-        for (rotation in listOf(0, 90, 270, 180)) {
-            val rotated = Photos.rotate(bitmap, rotation)
-            val found = runCatching {
-                barcodes.process(InputImage.fromBitmap(rotated, 0)).await()
-            }.getOrDefault(emptyList())
-            val numeric = found.count { (it.rawValue ?: "").filter(Char::isDigit).length in 11..13 }
-            if (numeric > bestBarcodes.count { (it.rawValue ?: "").filter(Char::isDigit).length in 11..13 }) {
-                bestBarcodes = found
-                chosen = rotated
-            }
-            if (rotation == 0 && numeric >= 2) break // upright is the common case
-        }
-        if (bestBarcodes.isEmpty()) return emptyList()
+        val upright = uprightForText(bitmap)
 
-        val result = text.process(InputImage.fromBitmap(chosen, 0)).await()
-        val texts = result.textBlocks.flatMap { b -> b.lines }.mapNotNull { line ->
-            val r = line.boundingBox ?: return@mapNotNull null
-            TextBox(line.text, r.left, r.top, r.width(), r.height())
+        val texts = ArrayList<TextBox>()
+        val boxes = ArrayList<BarcodeBox>()
+        val h = upright.height
+        val tiles = 4
+        val tileH = h / tiles
+        val overlap = tileH / 4
+        var y = 0
+        while (y < h) {
+            val th = minOf(tileH + overlap, h - y)
+            if (th < 40) break
+            val tile = Bitmap.createBitmap(upright, 0, y, upright.width, th)
+            val img = InputImage.fromBitmap(tile, 0)
+            runCatching { text.process(img).await() }.getOrNull()?.textBlocks
+                ?.flatMap { it.lines }?.forEach { line ->
+                    val r = line.boundingBox ?: return@forEach
+                    texts += TextBox(line.text, r.left, r.top + y, r.width(), r.height())
+                }
+            runCatching { barcodes.process(img).await() }.getOrNull()?.forEach { b ->
+                val r = b.boundingBox ?: return@forEach
+                b.rawValue?.let { boxes += BarcodeBox(it, r.left, r.top + y, r.width(), r.height()) }
+            }
+            y += tileH
         }
-        val boxes = bestBarcodes.mapNotNull { b ->
-            val r = b.boundingBox ?: return@mapNotNull null
-            b.rawValue?.let { BarcodeBox(it, r.left, r.top, r.width(), r.height()) }
+
+        // Overlap re-reads the seam; keep one barcode per value and drop duplicate text lines.
+        val seenCodes = HashSet<String>()
+        val uniqueBoxes = boxes.filter { seenCodes.add(it.value.filter(Char::isDigit)) }
+        val seenText = HashSet<String>()
+        val uniqueTexts = texts.filter { seenText.add("${it.text.trim()}@${it.y / 25}") }
+
+        // Two report shapes: barcode-anchored order books, and plain-text reports
+        // (Throwaway Batch Report) where the UPC is printed. Run both and merge.
+        val fromBarcodes = OrderSheetParser.parse(uniqueTexts, uniqueBoxes)
+        val fromText = TextTableParser.parse(reconstructRows(uniqueTexts))
+
+        val byUpc = LinkedHashMap<String, OrderRow>()
+        for (r in fromBarcodes + fromText) {
+            if (r.upc.isBlank()) continue
+            val existing = byUpc[r.upc]
+            // Prefer the reading that actually recovered a name.
+            byUpc[r.upc] = when {
+                existing == null -> r
+                existing.name.isBlank() && r.name.isNotBlank() -> r
+                else -> existing
+            }
         }
-        return OrderSheetParser.parse(texts, boxes)
+        return byUpc.values.toList()
+    }
+
+    /** Rebuilds full-width row strings from column text boxes by grouping on their baseline Y. */
+    private fun reconstructRows(texts: List<TextBox>): List<String> {
+        if (texts.isEmpty()) return emptyList()
+        val medianH = texts.map { it.h }.sorted()[texts.size / 2].coerceAtLeast(1)
+        val tol = medianH * 0.6f
+        val rows = mutableListOf<MutableList<TextBox>>()
+        for (t in texts.sortedBy { it.cy }) {
+            val row = rows.lastOrNull()
+            if (row != null && kotlin.math.abs(t.cy - row.map { it.cy }.average().toFloat()) <= tol) {
+                row += t
+            } else {
+                rows += mutableListOf(t)
+            }
+        }
+        return rows.map { r -> r.sortedBy { it.x }.joinToString(" ") { it.text.trim() } }
+    }
+
+    /** Rotation (0/90/180/270) of [bitmap] that yields the most recognised text. */
+    private suspend fun uprightForText(bitmap: Bitmap): Bitmap {
+        val small = Photos.scaleDown(bitmap, 1400)
+        var best = bitmap
+        var bestChars = -1
+        for (rotation in listOf(0, 90, 270, 180)) {
+            val probe = Photos.rotate(small, rotation)
+            val chars = runCatching { text.process(InputImage.fromBitmap(probe, 0)).await() }
+                .getOrNull()?.textBlocks?.sumOf { b -> b.text.count { it.isLetterOrDigit() } } ?: 0
+            if (chars > bestChars) {
+                bestChars = chars
+                best = if (rotation == 0) bitmap else Photos.rotate(bitmap, rotation)
+            }
+        }
+        return best
     }
 
     /** Glyph height from the rotated box corners (top-left to bottom-left), so slanted labels measure right. */
