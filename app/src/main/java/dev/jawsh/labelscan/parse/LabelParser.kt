@@ -85,8 +85,9 @@ object LabelParser {
     private val SLOT = Regex("""\b([A-Z])\s?-\s?([A-Z0-9]{1,3})\s?-\s?(\d{1,3})\s?-\s?(\d{1,3})\s?-\s?(\d{1,4})\b""")
     private val DOOR = Regex("""\b([A-Z]\d{1,2}-\d{1,3}-[A-Z])\b""")
     private val LONE_NUMBER = Regex("""(?<![\d#])(\d{11,13})(?!\d)""")
-    // Dashed printed UPC on shelf tags / order books: "7-08820-10383", "07-19283-02727".
-    private val DASHED_UPC = Regex("""(?<!\d)(\d{1,2})\s?-\s?(\d{5})\s?-\s?\s{0,3}(\d{4,5})(?!\d)""")
+    // Dashed printed UPC on shelf tags / order books: "7-08820-10383", "07-19283-02727",
+    // tolerating OCR reading a dash as a period or dropping it to a space ("7-08820. 10350").
+    private val DASHED_UPC = Regex("""(?<!\d)(\d{1,2})[-. ]+(\d{5})[-. ]+(\d{4,5})(?!\d)""")
     // Shelf-tag fields.
     private val PRICE = Regex("""(?<![\d.])(\d{1,3}\.\d{2})(?![\d])""")
     private val PER_OZ = Regex("""(\d+(?:\.\d+)?)\s*[¢cC]?\s*(?:PER\s*OZ|/\s*OZ)""", RegexOption.IGNORE_CASE)
@@ -145,13 +146,15 @@ object LabelParser {
         val text = clean.joinToString("\n")
 
         val asg = ASG.find(text)?.let { Gtin.digitize(it.groupValues[1]) }?.takeIf { '?' !in it } ?: ""
-        val caseId = barcodes.firstOrNull { !it.isProductCode }?.value?.trim() ?: ""
+        // Shelf/retail tag: its barcode is the product UPC, not a DC case serial.
+        val retailTag = PER_OZ.containsMatchIn(text) || SEC_POS.containsMatchIn(text)
+        val caseId = if (retailTag) "" else barcodes.firstOrNull { !it.isProductCode }?.value?.trim() ?: ""
         val case = CASE.find(text)?.let { m ->
             val n = m.groupValues[1].toInt()
             val t = m.groupValues[2].toInt()
             if (n in 1..t) n to t else null
         }
-        val upc = findUpc(clean, barcodes, exclude = setOf(asg, caseId))
+        val upc = findUpc(clean, barcodes, exclude = setOf(asg, caseId), retailTag = retailTag)
         val name = findName(lines)
 
         return LabelData(
@@ -212,7 +215,12 @@ object LabelParser {
         }
     }
 
-    private fun findUpc(lines: List<String>, barcodes: List<ScannedBarcode>, exclude: Set<String>): Upc {
+    private fun findUpc(
+        lines: List<String>,
+        barcodes: List<ScannedBarcode>,
+        exclude: Set<String>,
+        retailTag: Boolean = false,
+    ): Upc {
         // 1. A retail barcode on the package is exact — trust it over OCR.
         barcodes.firstOrNull { it.isProductCode && Gtin.isValid(it.value) }
             ?.let { return Upc(it.value, UpcSource.BARCODE, it.value) }
@@ -230,12 +238,22 @@ object LabelParser {
             fromPrinted(digits)?.let { return it }
         }
 
-        // 3. A bare 11-13 digit number on its own, e.g. labels that omit "UPC#".
-        return lines.asSequence()
+        // 4. A bare 11-13 digit number on its own, e.g. labels that omit "UPC#".
+        lines.asSequence()
             .flatMap { LONE_NUMBER.findAll(it).map { m -> m.groupValues[1] } }
             .filter { it !in exclude }
             .firstNotNullOfOrNull { fromPrinted(it) }
-            ?: Upc("", UpcSource.NONE, "")
+            ?.let { return it }
+
+        // 5. On a shelf/retail tag, the (Code-128) barcode digits ARE the UPC, so use them
+        //    when the printed number couldn't be read. Not done for DC case labels, whose
+        //    barcode is a case serial, not a product code.
+        if (retailTag) {
+            barcodes.mapNotNull { b -> b.value.filter(Char::isDigit).takeIf { it.length in 10..13 } }
+                .firstNotNullOfOrNull { fromPrinted(it) }
+                ?.let { return it }
+        }
+        return Upc("", UpcSource.NONE, "")
     }
 
     private fun findDept(lines: List<String>): String {
@@ -303,21 +321,25 @@ object LabelParser {
             Triple(i, s, base * scale)
         }.maxByOrNull { it.third }?.takeIf { it.third > 0 } ?: return ""
 
-        // A headline in big type often wraps ("FFM TURNOVERS" / "APPLE 4CT"): take the
-        // following lines of the same size too — but only their description words, so a
-        // stray "1 of 1" or slot code on a same-size line never lands in the name.
-        val parts = mutableListOf(best.second)
+        // A headline in big type often wraps across lines ("FFM 5PK SLICED" /
+        // "EVERYTHING BAGELS"). Gather the contiguous run of same-size neighbours on
+        // BOTH sides of the anchor, in reading order, so a preceding line isn't lost.
         val h = lines[best.first].height
+        val idxs = sortedSetOf(best.first)
         if (rel(lines[best.first]) >= 1.5f) {
-            for (next in lines.drop(best.first + 1)) {
-                if (next.height !in h * 0.8f..h * 1.25f) break
-                if (NOT_NAME.containsMatchIn(next.text)) break
-                val cont = descriptionTokens(next.text)
-                if (cont.isEmpty()) break
-                parts += cont.joinToString(" ")
-            }
+            // wordy() keeps pack counts like "5PK" that belong to the name, and returns
+            // null for a stray "1 of 1"/slot line, so those never join the headline.
+            fun sameBlock(line: OcrLine): Boolean =
+                line.height in h * 0.8f..h * 1.25f && !NOT_NAME.containsMatchIn(line.text) &&
+                    wordy(line.text) != null
+            var up = best.first - 1
+            while (up >= 0 && sameBlock(lines[up])) { idxs += up; up-- }
+            var down = best.first + 1
+            while (down <= lines.lastIndex && sameBlock(lines[down])) { idxs += down; down++ }
         }
-        return parts.joinToString(" ")
+        return idxs.joinToString(" ") { i ->
+            if (i == best.first) best.second else wordy(lines[i].text).orEmpty()
+        }.replace(Regex("\\s+"), " ").trim()
     }
 
     /** A secondary "DOUGH 21 OZ"-style line: words followed by a size. */

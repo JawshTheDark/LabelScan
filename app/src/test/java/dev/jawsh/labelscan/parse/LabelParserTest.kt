@@ -138,7 +138,7 @@ class LabelParserTest {
             OcrLine("Contains: Wheat, Soy", 18f),
         )
         val d = LabelParser.parseLines(lines)
-        assertEquals("FFM TURNOVERS APPLE", d.name)
+        assertEquals("FFM TURNOVERS APPLE 4CT", d.name)
         assertEquals("4 CT", d.size)
     }
 
@@ -232,6 +232,29 @@ class LabelParserTest {
         assertTrue(d.upcValid)
         assertEquals("20 OZ", d.size)
         assertEquals("07-002", d.slot) // SEC: POS location
+        assertEquals("4.49", d.price)
+        assertEquals("22.5¢/oz", d.unitPrice)
+    }
+
+    @Test fun shelfTagNameLineAboveAnchorAndPeriodDashUpc() {
+        // Real OCR: dash read as a period, and "FFM 5PK SLICED" sits above the anchor line.
+        val lines = listOf(
+            OcrLine("425/26 053 AW-30", 16f),
+            OcrLine("UNIT PRICE", 14f),
+            OcrLine("22.5 ¢ PER OZ", 14f),
+            OcrLine("20 OZ", 14f),
+            OcrLine("7-08820. 10350", 16f),
+            OcrLine("SEC: POS:", 14f),
+            OcrLine("07-007", 14f),
+            OcrLine("FFM 5PK SLICED", 40f),
+            OcrLine("EVERYTHING BAGELS", 40f),
+            OcrLine("4.49", 90f),
+        )
+        val d = LabelParser.parseLines(lines)
+        assertEquals("FFM 5PK SLICED EVERYTHING BAGELS", d.name)
+        assertEquals("708820103504", d.upc)
+        assertEquals("20 OZ", d.size)
+        assertEquals("07-007", d.slot)
         assertEquals("4.49", d.price)
         assertEquals("22.5¢/oz", d.unitPrice)
     }
