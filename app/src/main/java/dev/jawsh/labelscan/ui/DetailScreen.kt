@@ -324,7 +324,7 @@ private fun Editor(p: Product, onCancel: () -> Unit, onSave: (Product) -> Unit) 
         label = { Text("UPC") }, singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
     )
-    Field("Name", e.name) { e = e.copy(name = it) }
+    Field("Name", e.name.uppercase()) { e = e.copy(name = it.uppercase()) }
     Field("Item #", e.itemNo, number = true) { e = e.copy(itemNo = it) }
     Field("Size", e.size) { e = e.copy(size = it) }
     Field("Category", e.category) { e = e.copy(category = it) }

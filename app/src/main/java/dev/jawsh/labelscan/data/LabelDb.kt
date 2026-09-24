@@ -329,7 +329,7 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
 
     private fun Product.toValues() = ContentValues().apply {
         put("upc", upc)
-        put("name", name)
+        put("name", name.uppercase()) // names are always stored capitalized
         put("category", category)
         put("item_no", itemNo)
         put("size", size)

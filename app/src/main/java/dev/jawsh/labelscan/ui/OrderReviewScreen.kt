@@ -120,7 +120,7 @@ private fun RowEditor(d: RowDraft, checked: Boolean, alreadyInCatalog: Boolean, 
         Checkbox(checked = checked, onCheckedChange = onCheck)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             OutlinedTextField(
-                name, { name = it; d.name = it },
+                name, { name = it.uppercase(); d.name = name },
                 Modifier.fillMaxWidth(),
                 label = { Text("Name") },
                 singleLine = true,

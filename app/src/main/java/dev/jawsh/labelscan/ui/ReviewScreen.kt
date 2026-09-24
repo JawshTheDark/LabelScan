@@ -99,7 +99,7 @@ fun ReviewScreen(vm: AppViewModel, review: Screen.Review, modifier: Modifier) {
                 isError = label.upc.length > 11 && !label.upcValid,
                 supportingText = { Text(upcHint(label, edited = label.upc != review.label.upc)) },
             )
-            Field("Name", label.name, placeholder = known?.name) { label = label.copy(name = it) }
+            Field("Name", label.name.uppercase(), placeholder = known?.name) { label = label.copy(name = it.uppercase()) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Field("Item #", label.itemNo, Modifier.weight(1f), number = true) { label = label.copy(itemNo = it) }
                 Field("Size", label.size, Modifier.weight(1f)) { label = label.copy(size = it) }
