@@ -231,6 +231,9 @@ class LabelParserTest {
         assertEquals("708820103832", d.upc) // 7-08820-10383 + check digit
         assertTrue(d.upcValid)
         assertEquals("20 OZ", d.size)
+        assertEquals("07-002", d.slot) // SEC: POS location
+        assertEquals("4.49", d.price)
+        assertEquals("22.5¢/oz", d.unitPrice)
     }
 
     @Test fun emptyInputGivesEmptyData() {

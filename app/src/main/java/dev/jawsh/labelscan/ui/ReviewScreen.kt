@@ -109,8 +109,12 @@ fun ReviewScreen(vm: AppViewModel, review: Screen.Review, modifier: Modifier) {
                 Field("Dept", label.dept, Modifier.weight(1f)) { label = label.copy(dept = it) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Field("Slot", label.slot, Modifier.weight(2f)) { label = label.copy(slot = it) }
+                Field("Location", label.slot, Modifier.weight(2f)) { label = label.copy(slot = it) }
                 Field("PLU", label.plu, Modifier.weight(1f), number = true) { label = label.copy(plu = it) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Field("Price", label.price, Modifier.weight(1f)) { label = label.copy(price = it) }
+                Field("Cost/oz", label.unitPrice, Modifier.weight(1f)) { label = label.copy(unitPrice = it) }
             }
 
             val extra = listOfNotNull(

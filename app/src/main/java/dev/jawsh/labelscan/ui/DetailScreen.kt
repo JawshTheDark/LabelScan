@@ -137,10 +137,12 @@ fun DetailScreen(vm: AppViewModel, upc: String, modifier: Modifier) {
                 Info("UPC", product.upc, mono = true)
                 Info("Item #", product.itemNo)
                 Info("Size", product.size)
+                Info("Price", product.price)
+                Info("Cost/oz", product.unitPrice)
                 Info("Category", product.category)
                 Info("Dept", product.dept)
                 Info("PLU", product.plu)
-                Info("Last slot", product.lastSlot)
+                Info("Location", product.lastSlot)
                 Info("Notes", product.notes)
                 Info("Seen", "${product.timesSeen}× — first ${formatDate(product.firstSeen)}, last ${formatDate(product.lastSeen)}")
             }
@@ -327,10 +329,12 @@ private fun Editor(p: Product, onCancel: () -> Unit, onSave: (Product) -> Unit) 
     Field("Name", e.name.uppercase()) { e = e.copy(name = it.uppercase()) }
     Field("Item #", e.itemNo, number = true) { e = e.copy(itemNo = it) }
     Field("Size", e.size) { e = e.copy(size = it) }
+    Field("Price", e.price) { e = e.copy(price = it) }
+    Field("Cost/oz", e.unitPrice) { e = e.copy(unitPrice = it) }
     Field("Category", e.category) { e = e.copy(category = it) }
     Field("Dept", e.dept) { e = e.copy(dept = it) }
     Field("PLU", e.plu, number = true) { e = e.copy(plu = it) }
-    Field("Last slot", e.lastSlot) { e = e.copy(lastSlot = it) }
+    Field("Location", e.lastSlot) { e = e.copy(lastSlot = it) }
     OutlinedTextField(e.notes, { e = e.copy(notes = it) }, Modifier.fillMaxWidth(), label = { Text("Notes") })
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = onCancel, Modifier.weight(1f)) { Text("Cancel") }

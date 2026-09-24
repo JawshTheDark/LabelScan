@@ -33,6 +33,10 @@ data class LabelData(
     val plu: String = "",
     val slot: String = "",
     val door: String = "",
+    /** Retail price, e.g. "4.49" (shelf tags). */
+    val price: String = "",
+    /** Unit/shelf price, e.g. "22.5¢/oz" (shelf tags). */
+    val unitPrice: String = "",
     val caseNo: Int? = null,
     val caseTotal: Int? = null,
     val caseId: String = "",
@@ -46,7 +50,7 @@ data class LabelData(
         (if (upcValid) 10 else if (upc.isNotEmpty()) 3 else 0) +
             (if (itemNo.isNotEmpty()) 3 else 0) +
             (if (name.isNotEmpty()) 3 else 0) +
-            listOf(size, slot, door, asg, dept, plu).count { it.isNotEmpty() } +
+            listOf(size, slot, door, asg, dept, plu, price, unitPrice).count { it.isNotEmpty() } +
             (if (caseNo != null) 1 else 0)
 
     val isComplete: Boolean get() = upcValid && name.isNotEmpty() && (itemNo.isNotEmpty() || upcSource == UpcSource.BARCODE)
@@ -83,6 +87,11 @@ object LabelParser {
     private val LONE_NUMBER = Regex("""(?<![\d#])(\d{11,13})(?!\d)""")
     // Dashed printed UPC on shelf tags / order books: "7-08820-10383", "07-19283-02727".
     private val DASHED_UPC = Regex("""(?<!\d)(\d{1,2})\s?-\s?(\d{5})\s?-\s?\s{0,3}(\d{4,5})(?!\d)""")
+    // Shelf-tag fields.
+    private val PRICE = Regex("""(?<![\d.])(\d{1,3}\.\d{2})(?![\d])""")
+    private val PER_OZ = Regex("""(\d+(?:\.\d+)?)\s*[¢cC]?\s*(?:PER\s*OZ|/\s*OZ)""", RegexOption.IGNORE_CASE)
+    private val SEC_POS = Regex("""POS\s*:?\s*([0-9A-Z]{1,3}\s?-\s?[0-9A-Z]{1,4})""", RegexOption.IGNORE_CASE)
+    private val AISLE = Regex("""\b([A-Z]-[A-Z]{1,3}-\d{1,3})\b""")
 
     private val KNOWN_DEPTS = listOf(
         "BKY", "FROZ", "FRZ", "DELI", "DLI", "DAIRY", "DRY", "GROC", "GRO", "PROD", "MEAT", "SEA", "HBC", "FLRL",
@@ -155,8 +164,15 @@ object LabelParser {
             size = findSize(text) ?: PACK.find(text)?.let { "${it.groupValues[1]}/CS" } ?: "",
             dept = findDept(clean),
             plu = PLU.find(text)?.groupValues?.get(1) ?: "",
-            slot = SLOT.find(text)?.groupValues?.drop(1)?.joinToString("-") ?: "",
+            // Shelf location: the SEC:POS code (e.g. 07-002), else the DC slot, else the aisle (A-WL-30).
+            slot = SEC_POS.find(text)?.groupValues?.get(1)?.replace(" ", "")
+                ?: SLOT.find(text)?.groupValues?.drop(1)?.joinToString("-")
+                ?: AISLE.find(text)?.groupValues?.get(1)
+                ?: "",
             door = DOOR.find(text)?.groupValues?.get(1) ?: "",
+            price = PRICE.findAll(text).map { it.groupValues[1] }
+                .maxByOrNull { it.toDoubleOrNull() ?: 0.0 } ?: "",
+            unitPrice = PER_OZ.find(text)?.let { "${it.groupValues[1]}¢/oz" } ?: "",
             caseNo = case?.first,
             caseTotal = case?.second,
             caseId = caseId,

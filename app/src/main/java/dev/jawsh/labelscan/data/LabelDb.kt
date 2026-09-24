@@ -18,6 +18,8 @@ data class Product(
     val dept: String = "",
     val plu: String = "",
     val lastSlot: String = "",
+    val price: String = "",
+    val unitPrice: String = "",
     val notes: String = "",
     val timesSeen: Int = 0,
     val firstSeen: Long = 0,
@@ -57,7 +59,7 @@ data class Receipt(
     val scannedAt: Long,
 )
 
-class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null, 3) {
+class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null, 4) {
 
     override fun onCreate(db: SQLiteDatabase) {
         createPhotoTable(db)
@@ -71,6 +73,8 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
                 dept TEXT NOT NULL DEFAULT '',
                 plu TEXT NOT NULL DEFAULT '',
                 last_slot TEXT NOT NULL DEFAULT '',
+                price TEXT NOT NULL DEFAULT '',
+                unit_price TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
                 times_seen INTEGER NOT NULL DEFAULT 0,
                 first_seen INTEGER NOT NULL,
@@ -113,6 +117,10 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
             completeCheckDigits(db)
         }
         if (oldVersion < 3) createPhotoTable(db)
+        if (oldVersion < 4) {
+            db.execSQL("ALTER TABLE product ADD COLUMN price TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE product ADD COLUMN unit_price TEXT NOT NULL DEFAULT ''")
+        }
     }
 
     /**
@@ -185,6 +193,8 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
                 dept = label.dept.ifBlank { old?.dept ?: "" },
                 plu = label.plu.ifBlank { old?.plu ?: "" },
                 lastSlot = label.slot.ifBlank { old?.lastSlot ?: "" },
+                price = label.price.ifBlank { old?.price ?: "" },
+                unitPrice = label.unitPrice.ifBlank { old?.unitPrice ?: "" },
                 notes = old?.notes ?: "",
                 timesSeen = (old?.timesSeen ?: 0) + 1,
                 firstSeen = old?.firstSeen ?: now,
@@ -314,6 +324,8 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
         dept = base.dept.ifBlank { extra.dept },
         plu = base.plu.ifBlank { extra.plu },
         lastSlot = base.lastSlot.ifBlank { extra.lastSlot },
+        price = base.price.ifBlank { extra.price },
+        unitPrice = base.unitPrice.ifBlank { extra.unitPrice },
         notes = mergeNotes(base.notes, extra.notes),
         timesSeen = maxOf(base.timesSeen, extra.timesSeen),
         firstSeen = listOf(base.firstSeen, extra.firstSeen).filter { it > 0 }.minOrNull() ?: 0,
@@ -336,6 +348,8 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
         put("dept", dept)
         put("plu", plu)
         put("last_slot", lastSlot)
+        put("price", price)
+        put("unit_price", unitPrice)
         put("notes", notes)
         put("times_seen", timesSeen)
         put("first_seen", firstSeen)
@@ -356,6 +370,8 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
         dept = str("dept"),
         plu = str("plu"),
         lastSlot = str("last_slot"),
+        price = str("price"),
+        unitPrice = str("unit_price"),
         notes = str("notes"),
         timesSeen = long("times_seen").toInt(),
         firstSeen = long("first_seen"),
