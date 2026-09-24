@@ -1,13 +1,11 @@
 package dev.jawsh.labelscan
 
 import android.app.Application
-import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.jawsh.labelscan.data.LabelDb
@@ -252,18 +250,21 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Writes the whole repository to a CSV and returns a share intent for it. */
-    suspend fun exportIntent(): Intent = withContext(Dispatchers.IO) {
-        val dir = File(app.cacheDir, "exports").apply { mkdirs() }
-        val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(System.currentTimeMillis())
-        val file = File(dir, "labelscan-$stamp.csv")
-        file.writeText(ProductCsv.write(db.search("")))
-        val uri = FileProvider.getUriForFile(app, "${app.packageName}.files", file)
-        Intent(Intent.ACTION_SEND).apply {
-            type = "text/csv"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_SUBJECT, file.name)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    /** Suggested filename for the "Save to…" picker. */
+    fun exportFileName(): String =
+        "labelscan-" + SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(System.currentTimeMillis()) + ".csv"
+
+    /** Writes the whole repository as CSV to a location the user chose via the system file picker. */
+    fun exportTo(uri: Uri) {
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    app.contentResolver.openOutputStream(uri)?.use { it.write(ProductCsv.write(db.search("")).toByteArray()) }
+                        ?: error("no output stream")
+                    true
+                }.getOrDefault(false)
+            }
+            say(if (ok) "Saved CSV (${total} UPCs)" else "Couldn't save the file")
         }
     }
 
