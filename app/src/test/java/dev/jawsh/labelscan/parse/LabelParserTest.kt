@@ -214,6 +214,25 @@ class LabelParserTest {
         assertEquals("", LabelParser.parse(lines).name)
     }
 
+    @Test fun shelfTagWithDashedUpcAndWrappedName() {
+        // Meijer shelf price tag: dashed UPC, FFM headline wraps, plus shelf-tag noise.
+        val lines = listOf(
+            OcrLine("4/25/26 053 A-WL-30 7-08820- 10383", 16f),
+            OcrLine("SEC: POS: 07-002", 16f),
+            OcrLine("FFM 5PK SLICED TIE", 40f),
+            OcrLine("DYE BAGELS", 40f),
+            OcrLine("UNIT PRICE", 14f),
+            OcrLine("22.5 ¢ PER OZ", 14f),
+            OcrLine("20 OZ", 14f),
+            OcrLine("4.49", 90f),
+        )
+        val d = LabelParser.parseLines(lines)
+        assertEquals("FFM 5PK SLICED TIE DYE BAGELS", d.name)
+        assertEquals("708820103832", d.upc) // 7-08820-10383 + check digit
+        assertTrue(d.upcValid)
+        assertEquals("20 OZ", d.size)
+    }
+
     @Test fun emptyInputGivesEmptyData() {
         val d = LabelParser.parse(emptyList())
         assertEquals("", d.upc)

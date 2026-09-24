@@ -81,6 +81,8 @@ object LabelParser {
     private val SLOT = Regex("""\b([A-Z])\s?-\s?([A-Z0-9]{1,3})\s?-\s?(\d{1,3})\s?-\s?(\d{1,3})\s?-\s?(\d{1,4})\b""")
     private val DOOR = Regex("""\b([A-Z]\d{1,2}-\d{1,3}-[A-Z])\b""")
     private val LONE_NUMBER = Regex("""(?<![\d#])(\d{11,13})(?!\d)""")
+    // Dashed printed UPC on shelf tags / order books: "7-08820-10383", "07-19283-02727".
+    private val DASHED_UPC = Regex("""(?<!\d)(\d{1,2})\s?-\s?(\d{5})\s?-\s?\s{0,3}(\d{4,5})(?!\d)""")
 
     private val KNOWN_DEPTS = listOf(
         "BKY", "FROZ", "FRZ", "DELI", "DLI", "DAIRY", "DRY", "GROC", "GRO", "PROD", "MEAT", "SEA", "HBC", "FLRL",
@@ -89,7 +91,8 @@ object LabelParser {
     private val NOT_DEPT = setOf("UPC", "ITM", "ASG", "LBS", "GAL", "NEW", "CASE", "EACH", "REG")
     /** Lines that are never the product name. */
     private val NOT_NAME = Regex(
-        "^(NO PRIMARY|REG PRICE|SELL BY|BEST BY|USE BY|PACKED ON|INGREDIENTS|CONTAINS|KEEP |DIST\\.? BY|" +
+        "^(NO PRIMARY|REG PRICE|UNIT PRICE|UNIT|PER OZ|PULL TAG|SEC|POS|SELL BY|BEST BY|USE BY|PACKED ON|" +
+            "INGREDIENTS|CONTAINS|KEEP |DIST\\.? BY|" +
             // Box handling / prep instructions printed large on cartons
             "MOVE FROM|THIS SIDE|PLACE PRODUCT|PRODUCT ON|DO NOT|PERISHABLE|FRAGILE|HANDLE|THAW|" +
             "PREHEAT|BAKE|OVEN|MINUTES|MINUTE|INSTRUCTIONS|LINED SHEET|REMOVE|STORE AT|FROZEN|REFRIGERAT|" +
@@ -198,7 +201,13 @@ object LabelParser {
         barcodes.firstOrNull { it.isProductCode && Gtin.isValid(it.value) }
             ?.let { return Upc(it.value, UpcSource.BARCODE, it.value) }
 
-        // 2. The "UPC#" field on the label.
+        // 2. A dashed printed UPC ("7-08820-10383" on shelf tags, "07-19283-02727" on order books).
+        for (line in lines) {
+            val m = DASHED_UPC.find(line) ?: continue
+            fromPrinted(m.groupValues[1] + m.groupValues[2] + m.groupValues[3])?.let { return it }
+        }
+
+        // 3. The "UPC#" field on the label.
         for (line in lines) {
             val m = UPC.find(line) ?: continue
             val digits = Gtin.digitize(m.groupValues[1]).substringBefore('?').take(14)
