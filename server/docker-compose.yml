@@ -20,10 +20,12 @@ services:
     volumes:
       - ./minio-data:/data
     ports:
-      # Expose only if you want the MinIO console/API reachable directly.
-      # PocketBase reaches MinIO over the internal network regardless.
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
+      # PocketBase reaches MinIO over the internal Docker network, so the S3 API
+      # (9000) is NOT published on the host — that avoids clashing with anything
+      # already on 9000. Only the web console is published, on a configurable port
+      # (default 9101 to dodge a second MinIO). Set MINIO_CONSOLE_PORT=0 in .env
+      # to turn the console off entirely; reach it via SSH tunnel if you disable it.
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9101}:9001"
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 30s
@@ -61,7 +63,8 @@ services:
       - ./pb_public:/pb_public
       - ./pb_migrations:/pb_migrations
     ports:
-      - "127.0.0.1:8090:8090"
+      # Host port is configurable in case 8090 is taken; the container still serves 8090.
+      - "127.0.0.1:${PB_PORT:-8090}:8090"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8090/api/health"]
       interval: 30s
