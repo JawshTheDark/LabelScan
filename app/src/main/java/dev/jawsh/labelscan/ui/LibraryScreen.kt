@@ -26,6 +26,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,6 +40,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.jawsh.labelscan.AppViewModel
 import dev.jawsh.labelscan.Screen
+import dev.jawsh.labelscan.data.LabelDb
 import dev.jawsh.labelscan.data.Product
 
 @Composable
@@ -91,6 +93,7 @@ fun LibraryScreen(vm: AppViewModel, modifier: Modifier) {
                 },
                 singleLine = true,
             )
+            SortRow(vm)
             if (vm.products.isEmpty()) {
                 Text(
                     if (vm.query.isEmpty()) "No UPCs yet.\nScan a label, or ⋮ → Import order sheet."
@@ -112,6 +115,32 @@ fun LibraryScreen(vm: AppViewModel, modifier: Modifier) {
             text = { Text("Scan") },
             modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
         )
+    }
+}
+
+@Composable
+private fun SortRow(vm: AppViewModel) {
+    var open by remember { mutableStateOf(false) }
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box {
+            TextButton(onClick = { open = true }) {
+                Text("Sort: ${vm.sort.label} ▾")
+            }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                for (s in LabelDb.Sort.entries) {
+                    DropdownMenuItem(
+                        text = { Text(if (s == vm.sort) "• ${s.label}" else s.label) },
+                        onClick = {
+                            open = false
+                            vm.chooseSort(s)
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 

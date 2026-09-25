@@ -143,14 +143,22 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
     fun count(): Int = readableDatabase.rawQuery("SELECT COUNT(*) FROM product", null)
         .use { it.moveToFirst(); it.getInt(0) }
 
+    /** How the library list is ordered. */
+    enum class Sort(val label: String, val sql: String) {
+        RECENT("Recent", "last_seen DESC"),
+        // Unnamed items sink to the bottom instead of leading an A–Z list.
+        NAME("Name A–Z", "CASE WHEN name = '' THEN 1 ELSE 0 END, name COLLATE NOCASE, upc"),
+        UPC("UPC", "upc"),
+    }
+
     /** Every whitespace-separated term must match some field (name, UPC, item #, slot, ...). */
-    fun search(query: String): List<Product> {
+    fun search(query: String, sort: Sort = Sort.RECENT): List<Product> {
         val terms = query.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
         val fields = listOf("upc", "name", "category", "item_no", "size", "dept", "plu", "last_slot", "notes")
         val where = terms.joinToString(" AND ") { "(" + fields.joinToString(" OR ") { f -> "$f LIKE ?" } + ")" }
         val args = terms.flatMap { t -> List(fields.size) { "%$t%" } }.toTypedArray()
         val sql = "SELECT * FROM product" + (if (terms.isEmpty()) "" else " WHERE $where") +
-            " ORDER BY last_seen DESC"
+            " ORDER BY ${sort.sql}"
         return readableDatabase.rawQuery(sql, args).use { c -> buildList { while (c.moveToNext()) add(c.toProduct()) } }
     }
 

@@ -66,6 +66,50 @@ class TextTableParserTest {
         assertEquals("A-36-6-4", rows[2].location)
     }
 
+    @Test fun changedProductsShortAndDeletedRows() {
+        val lines = listOf(
+            "UPC Product Name Change Staus Previous ILC New ILC",
+            // Added row: Previous ILC is "-", New ILC is the location.
+            "4125051285 FFM 5PK SLICED SOURDOUGH BAGELS A - A-30-7-4",
+            // 9-digit UPC (shorter than a mid-line UPC run would allow) taken from the leading cell.
+            "822910100 BILL KNAPPS DUNKER NUTTY M A-30-7-10 A-30-7-9",
+            "822910903 BILL KNAPPS DUNKER CHOCOLATE M A-30-7-9 A-30-7-8",
+            // Deleted row: New ILC is "-", so no current location (not the previous one).
+            "4125051138 FFM BREAD CINNAMON 16.9 OZ D A-30-7-13 -",
+            "70882010435 FFM 5PK UNSLICED JALAPENO CHEDDAR BAGELS M A-30-7-8 A-30-7-7",
+        )
+        val rows = TextTableParser.parse(lines)
+        assertEquals(5, rows.size)
+
+        assertEquals("FFM 5PK SLICED SOURDOUGH BAGELS", rows[0].name)
+        assertEquals("A-30-7-4", rows[0].location)
+
+        assertEquals("BILL KNAPPS DUNKER NUTTY", rows[1].name)
+        assertEquals("822910100", rows[1].orderCode)
+        assertEquals("A-30-7-9", rows[1].location) // New ILC
+        assertTrue(rows[1].upcValid)
+
+        assertEquals("BILL KNAPPS DUNKER CHOCOLATE", rows[2].name)
+
+        assertEquals("FFM BREAD CINNAMON 16.9 OZ", rows[3].name)
+        assertEquals("16.9 OZ", rows[3].size)
+        assertEquals("", rows[3].location) // deleted — no new location
+
+        assertEquals("FFM 5PK UNSLICED JALAPENO CHEDDAR BAGELS", rows[4].name)
+    }
+
+    @Test fun creamCakeReportKeepsTrailingProductWords() {
+        val rows = TextTableParser.parse(
+            listOf(
+                "4069764031 CAFE VALLEY CREME CAKE RING 7UP M A-35-1-5 A-35-1-7",
+                "71373365678 FRESH FROM MEIJER CREME CAKE VARIETY M A-35-1-9 A-35-1-2",
+            ),
+        )
+        assertEquals("CAFE VALLEY CREME CAKE RING 7UP", rows[0].name)
+        assertEquals("A-35-1-7", rows[0].location)
+        assertEquals("FRESH FROM MEIJER CREME CAKE VARIETY", rows[1].name)
+    }
+
     @Test fun ignoresLinesWithoutAUpc() {
         assertEquals(emptyList<OrderRow>(), TextTableParser.parse(listOf("Page 1 of 2", "STORE 135 DEPT 53")))
     }

@@ -23,9 +23,12 @@ object TextTableParser {
     private val PURE_INT = Regex("""\d{1,3}""")
     private val CODE = Regex("""\d{4,}""") // meijer/product/vendor/item codes and column numbers
     private val MONEY = Regex("""\d+\.\d{2}""")
+    // Column/status tokens that break a description run. Header-only words like MEIJER,
+    // PRODUCT, DESCRIPTION and VENDOR are deliberately NOT here — they occur in real product
+    // names ("FRESH FROM MEIJER"), and header lines are already dropped for having no UPC.
     private val STATUS = Regex(
         "^(ACT|ANR|THROW|COMPACTOR|SALE|ORD|SHELF|FREEZER|REFRIGER|BKY|FROZ|DEPT|STORE|PAGE|UPC|PACK|" +
-            "STATUS|HI|TI|KEY|QTY|EST|EXTENDED|ESTIMATED|REASON|VENDOR|MEIJER|PRODUCT|DESCRIPTION)$",
+            "STATUS|HI|TI|KEY|QTY|EST|EXTENDED|ESTIMATED|REASON)$",
         RegexOption.IGNORE_CASE,
     )
 
@@ -33,13 +36,19 @@ object TextTableParser {
 
     private fun parseLine(raw: String): OrderRow? {
         val line = raw.trim()
-        val upcRaw = (UPC_DASH.find(line)?.value ?: UPC_PLAIN.find(line)?.value)
+        val tokens = line.split(Regex("\\s+")).filter { it.isNotEmpty() }
+
+        // On these reports the UPC is the first cell, and some are only 9 digits
+        // (e.g. Bill Knapps 822910100) — shorter than the mid-line UPC_PLAIN allows.
+        // A pure-digit leading token of catalog length is taken as the UPC; otherwise
+        // fall back to a dashed or 10-13 digit run anywhere on the row.
+        val leading = tokens.firstOrNull()?.takeIf { it.all(Char::isDigit) && it.length in 9..13 }
+        val upcRaw = (leading ?: UPC_DASH.find(line)?.value ?: UPC_PLAIN.find(line)?.value)
             ?.filter { it.isDigit() } ?: return null
-        if (upcRaw.length < 10) return null
+        if (upcRaw.length < 9) return null
 
         // Longest contiguous run of description words (letters, or a size like
         // "20 CT" that belongs to the name); codes/UPC/status/column numbers break it.
-        val tokens = line.split(Regex("\\s+")).filter { it.isNotEmpty() }
         var best = IntRange.EMPTY
         var run = -1
         for (i in tokens.indices) {
@@ -64,7 +73,10 @@ object TextTableParser {
             name = name,
             size = size,
             section = "",
-            location = ILC.findAll(line).lastOrNull()?.value ?: "",
+            // New ILC (the last one) is the current location. On a deleted row the New
+            // ILC column is "-", so a trailing dash means there's no new location — don't
+            // fall back to the Previous ILC and claim the item is still shelved there.
+            location = if (tokens.lastOrNull() in setOf("-", "–", "—")) "" else ILC.findAll(line).lastOrNull()?.value ?: "",
             codes = tokens.filter { CODE.matches(it) && it != upcRaw },
             rawText = line,
         )

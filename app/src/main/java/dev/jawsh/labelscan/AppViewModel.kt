@@ -41,6 +41,8 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     var screen by mutableStateOf<Screen>(Screen.Library)
     var query by mutableStateOf("")
         private set
+    var sort by mutableStateOf(LabelDb.Sort.RECENT)
+        private set
     var products by mutableStateOf<List<Product>>(emptyList())
         private set
     var total by mutableStateOf(0)
@@ -62,11 +64,18 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
+    fun chooseSort(s: LabelDb.Sort) {
+        if (s == sort) return
+        sort = s
+        refresh()
+    }
+
     private fun refresh() {
         val q = query
+        val s = sort
         viewModelScope.launch {
-            val (list, count) = withContext(Dispatchers.IO) { db.search(q) to db.count() }
-            if (q == query) products = list
+            val (list, count) = withContext(Dispatchers.IO) { db.search(q, s) to db.count() }
+            if (q == query && s == sort) products = list
             total = count
             revision++
         }
