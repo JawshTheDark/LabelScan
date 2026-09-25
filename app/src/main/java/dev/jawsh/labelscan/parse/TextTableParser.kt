@@ -17,6 +17,8 @@ package dev.jawsh.labelscan.parse
 object TextTableParser {
     private val UPC_DASH = Regex("""\d{2}-\d{5}-\d{5}""")
     private val UPC_PLAIN = Regex("""(?<!\d)\d{10,13}(?!\d)""")
+    // ILC shelf location on a Changed Products report, e.g. "A-36-2-16"; New ILC is the last one.
+    private val ILC = Regex("""\b[A-Z]-\d{1,2}-\d{1,2}-\d{1,2}\b""")
     private val SIZE = Regex("""^\d+(\.\d+)?(FL)?(OZ|LBS?|CT|PK|KG|ML|GAL|EA|G|L)$""", RegexOption.IGNORE_CASE)
     private val PURE_INT = Regex("""\d{1,3}""")
     private val CODE = Regex("""\d{4,}""") // meijer/product/vendor/item codes and column numbers
@@ -62,6 +64,7 @@ object TextTableParser {
             name = name,
             size = size,
             section = "",
+            location = ILC.findAll(line).lastOrNull()?.value ?: "",
             codes = tokens.filter { CODE.matches(it) && it != upcRaw },
             rawText = line,
         )
@@ -74,8 +77,8 @@ object TextTableParser {
         val t = tokens[i]
         if (SIZE.matches(t) || UNIT.matches(t)) return true // "13.5OZ", "6CT", or a bare "LB"
         if (STATUS.matches(t) || MONEY.matches(t) || CODE.matches(t) || UPC_DASH.matches(t)) return false
-        // A small integer counts only when it's the number of a following size unit ("20" in "20 CT").
-        if (PURE_INT.matches(t)) return tokens.getOrNull(i + 1)?.let { UNIT.matches(it) } == true
+        // A number counts only when it's the value of a following size unit ("20" in "20 CT", "21.1" in "21.1 OZ").
+        if (t.matches(Regex("""\d+(\.\d+)?"""))) return tokens.getOrNull(i + 1)?.let { UNIT.matches(it) } == true
         val letters = t.count(Char::isLetter)
         return letters >= 2 && letters >= t.count { !it.isWhitespace() } * 0.5
     }

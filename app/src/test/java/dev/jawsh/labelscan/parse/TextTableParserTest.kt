@@ -49,6 +49,23 @@ class TextTableParserTest {
         assertEquals("029519062811", rows[2].upc)
     }
 
+    @Test fun changedProductsReportWithIlcLocation() {
+        val lines = listOf(
+            "UPC Product Name Change Staus Previous ILC New ILC",
+            "65708202701 IZZIO ARTISAN BRD T&B BAGUETTE 12 OZ A - A-31-1-8",
+            "4125050964 FFM BREAD SANDWICH MULTIGRAIN 21.1 OZ M A-36-2-10 A-36-5-11",
+            "89049700030 ACE BISTRO LOAF SOUR DOUGH 21 OZ M A-36-6-6 A-36-6-4",
+        )
+        val rows = TextTableParser.parse(lines)
+        assertEquals(3, rows.size)
+        assertEquals("IZZIO ARTISAN BRD T&B BAGUETTE 12 OZ", rows[0].name)
+        assertEquals("A-31-1-8", rows[0].location)
+        assertEquals("FFM BREAD SANDWICH MULTIGRAIN 21.1 OZ", rows[1].name)
+        assertEquals("A-36-5-11", rows[1].location) // New ILC (last), not previous
+        assertEquals("890497000306", rows[2].upc)
+        assertEquals("A-36-6-4", rows[2].location)
+    }
+
     @Test fun ignoresLinesWithoutAUpc() {
         assertEquals(emptyList<OrderRow>(), TextTableParser.parse(listOf("Page 1 of 2", "STORE 135 DEPT 53")))
     }

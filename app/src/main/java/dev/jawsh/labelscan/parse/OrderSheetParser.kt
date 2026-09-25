@@ -20,6 +20,8 @@ data class OrderRow(
     val name: String,
     val size: String,
     val section: String,
+    /** Shelf/ILC location, e.g. "A-36-2-16" on a Changed Products report. */
+    val location: String = "",
     /** Meijer code, product id, vendor style — kept together, not individually labelled. */
     val codes: List<String>,
     val rawText: String,

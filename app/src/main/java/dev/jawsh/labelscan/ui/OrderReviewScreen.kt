@@ -40,6 +40,7 @@ private class RowDraft(
     var upc: String,
     var size: String,
     val section: String,
+    val location: String,
     val codes: List<String>,
     val orderCode: String,
 )
@@ -47,7 +48,7 @@ private class RowDraft(
 @Composable
 fun OrderReviewScreen(vm: AppViewModel, review: Screen.OrderReview, modifier: Modifier) {
     val drafts = remember(review) {
-        review.rows.map { RowDraft(it.name, it.upc, it.size, it.section, it.codes, it.orderCode) }
+        review.rows.map { RowDraft(it.name, it.upc, it.size, it.section, it.location, it.codes, it.orderCode) }
     }
     val include = remember(review) {
         mutableStateListOf<Boolean>().apply { addAll(review.rows.map { it.upcValid }) }
@@ -68,6 +69,7 @@ fun OrderReviewScreen(vm: AppViewModel, review: Screen.OrderReview, modifier: Mo
             category = d.section,
             size = d.size.trim(),
             dept = d.section.take(3).takeIf { it.length == 3 && it.all(Char::isDigit) }?.let { "D$it" } ?: "",
+            lastSlot = d.location,
             notes = notes,
         )
     }
@@ -142,6 +144,7 @@ private fun RowEditor(d: RowDraft, checked: Boolean, alreadyInCatalog: Boolean, 
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (d.section.isNotEmpty()) Text(d.section, style = MaterialTheme.typography.labelSmall)
+                if (d.location.isNotEmpty()) Text("@ ${d.location}", style = MaterialTheme.typography.labelSmall)
                 if (alreadyInCatalog) {
                     Text(
                         "• already in catalog — will fill blanks",
