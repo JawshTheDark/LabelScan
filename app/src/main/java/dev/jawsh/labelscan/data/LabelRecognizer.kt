@@ -134,21 +134,30 @@ class LabelRecognizer {
         return byUpc.values.toList()
     }
 
-    /** Rebuilds full-width row strings from column text boxes by grouping on their baseline Y. */
+    /**
+     * Rebuilds full-width row strings from column text boxes by grouping on their
+     * baseline Y. A row's cells share one baseline, so each new box is compared to
+     * the *anchor* (first box) of the current row, not a running average — averaging
+     * drifts and lets a whole stack of separate lines (a page's "Business Area /
+     * Department / POG Category" header) collapse into one bogus row. The tolerance
+     * sits well under a table's row pitch so stacked lines stay separate.
+     */
     private fun reconstructRows(texts: List<TextBox>): List<String> {
         if (texts.isEmpty()) return emptyList()
         val medianH = texts.map { it.h }.sorted()[texts.size / 2].coerceAtLeast(1)
-        val tol = medianH * 0.6f
+        val tol = medianH * 0.5f
         val rows = mutableListOf<MutableList<TextBox>>()
+        var anchorCy = Float.NEGATIVE_INFINITY
         for (t in texts.sortedBy { it.cy }) {
-            val row = rows.lastOrNull()
-            if (row != null && kotlin.math.abs(t.cy - row.map { it.cy }.average().toFloat()) <= tol) {
-                row += t
-            } else {
+            if (rows.isEmpty() || t.cy - anchorCy > tol) {
                 rows += mutableListOf(t)
+                anchorCy = t.cy
+            } else {
+                rows.last() += t
             }
         }
-        return rows.map { r -> r.sortedBy { it.x }.joinToString(" ") { it.text.trim() } }
+        // distinct() drops a cell re-read in an overlapping strip seam.
+        return rows.map { r -> r.sortedBy { it.x }.map { it.text.trim() }.distinct().joinToString(" ") }
     }
 
     /** Rotation (0/90/180/270) of [bitmap] that yields the most recognised text. */
