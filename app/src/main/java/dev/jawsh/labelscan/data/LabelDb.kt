@@ -43,7 +43,12 @@ data class Photo(
     val path: String,
     val note: String,
     val createdAt: Long,
+    /** PocketBase record id once uploaded; empty until synced or after a restore before download. */
+    val remoteId: String = "",
 )
+
+/** A pending remote delete to replay to the backend (product by UPC, or photo by record id). */
+data class Deletion(val id: Long, val kind: String, val upc: String, val remoteId: String)
 
 /** One physical case that came in, i.e. one scanned label. */
 data class Receipt(
@@ -59,10 +64,11 @@ data class Receipt(
     val scannedAt: Long,
 )
 
-class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null, 4) {
+class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null, 5) {
 
     override fun onCreate(db: SQLiteDatabase) {
         createPhotoTable(db)
+        createDeletionTable(db)
         db.execSQL(
             """CREATE TABLE product(
                 upc TEXT PRIMARY KEY,
@@ -78,7 +84,8 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
                 notes TEXT NOT NULL DEFAULT '',
                 times_seen INTEGER NOT NULL DEFAULT 0,
                 first_seen INTEGER NOT NULL,
-                last_seen INTEGER NOT NULL)"""
+                last_seen INTEGER NOT NULL,
+                dirty INTEGER NOT NULL DEFAULT 1)"""
         )
         db.execSQL(
             """CREATE TABLE receipt(
@@ -106,9 +113,21 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
                 kind TEXT NOT NULL DEFAULT 'OTHER',
                 path TEXT NOT NULL,
                 note TEXT NOT NULL DEFAULT '',
-                created_at INTEGER NOT NULL)"""
+                created_at INTEGER NOT NULL,
+                remote_id TEXT NOT NULL DEFAULT '',
+                dirty INTEGER NOT NULL DEFAULT 1)"""
         )
         db.execSQL("CREATE INDEX photo_upc ON photo(upc)")
+    }
+
+    private fun createDeletionTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE deletion(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                upc TEXT NOT NULL DEFAULT '',
+                remote_id TEXT NOT NULL DEFAULT '')"""
+        )
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -120,6 +139,13 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
         if (oldVersion < 4) {
             db.execSQL("ALTER TABLE product ADD COLUMN price TEXT NOT NULL DEFAULT ''")
             db.execSQL("ALTER TABLE product ADD COLUMN unit_price TEXT NOT NULL DEFAULT ''")
+        }
+        if (oldVersion < 5) {
+            // Off-device sync bookkeeping. Existing rows start dirty so a first backup pushes them.
+            db.execSQL("ALTER TABLE product ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1")
+            db.execSQL("ALTER TABLE photo ADD COLUMN remote_id TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE photo ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1")
+            createDeletionTable(db)
         }
     }
 
@@ -270,18 +296,23 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
 
     /** Deletes one attached photo and returns its file path so the caller can remove it. */
     fun deletePhoto(id: Long): String? {
-        val path = readableDatabase.rawQuery("SELECT path FROM photo WHERE id = ?", arrayOf(id.toString()))
-            .use { if (it.moveToFirst()) it.getString(0) else null }
+        val (path, remoteId) = readableDatabase
+            .rawQuery("SELECT path, remote_id FROM photo WHERE id = ?", arrayOf(id.toString()))
+            .use { if (it.moveToFirst()) it.getString(0) to it.getString(1) else null to "" }
+        if (!remoteId.isNullOrEmpty()) tombstone("photo", remoteId = remoteId)
         writableDatabase.delete("photo", "id = ?", arrayOf(id.toString()))
         return path
     }
 
     /** Deletes a product with its receipts and photos; returns the file paths that are now unused. */
     fun deleteProduct(upc: String): List<String> {
-        val files = (receipts(upc).map { it.photo } + photos(upc).map { it.path }).filter { it.isNotEmpty() }
+        val ps = photos(upc)
+        val files = (receipts(upc).map { it.photo } + ps.map { it.path }).filter { it.isNotEmpty() }
         val db = writableDatabase
         db.beginTransaction()
         try {
+            tombstone("product", upc = upc)
+            ps.filter { it.remoteId.isNotEmpty() }.forEach { tombstone("photo", remoteId = it.remoteId) }
             db.delete("receipt", "upc = ?", arrayOf(upc))
             db.delete("photo", "upc = ?", arrayOf(upc))
             db.delete("product", "upc = ?", arrayOf(upc))
@@ -290,6 +321,87 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
             db.endTransaction()
         }
         return files
+    }
+
+    private fun tombstone(kind: String, upc: String = "", remoteId: String = "") {
+        writableDatabase.insert("deletion", null, ContentValues().apply {
+            put("kind", kind); put("upc", upc); put("remote_id", remoteId)
+        })
+    }
+
+    // ---- Sync support: dirty rows, remote-id bookkeeping, tombstones, and restore ----
+
+    /** Products changed locally since their last successful push. */
+    fun dirtyProducts(): List<Product> =
+        readableDatabase.rawQuery("SELECT * FROM product WHERE dirty = 1", null)
+            .use { c -> buildList { while (c.moveToNext()) add(c.toProduct()) } }
+
+    /** Clears the dirty flag only if the row hasn't changed since it was pushed. */
+    fun markProductSynced(upc: String, lastSeen: Long) {
+        writableDatabase.execSQL(
+            "UPDATE product SET dirty = 0 WHERE upc = ? AND last_seen = ?",
+            arrayOf(upc, lastSeen.toString()),
+        )
+    }
+
+    /** Photos not yet uploaded (have a local file, no remote id). */
+    fun dirtyPhotos(): List<Photo> =
+        readableDatabase.rawQuery("SELECT * FROM photo WHERE dirty = 1 AND path != ''", null)
+            .use { c -> buildList { while (c.moveToNext()) add(c.toPhoto()) } }
+
+    fun markPhotoSynced(id: Long, remoteId: String) {
+        writableDatabase.execSQL(
+            "UPDATE photo SET remote_id = ?, dirty = 0 WHERE id = ?", arrayOf(remoteId, id.toString()),
+        )
+    }
+
+    /** Records the remote record id and local cache path for a photo pulled during restore. */
+    fun setPhotoLocalPath(id: Long, path: String) {
+        writableDatabase.execSQL("UPDATE photo SET path = ? WHERE id = ?", arrayOf(path, id.toString()))
+    }
+
+    fun pendingDeletions(): List<Deletion> =
+        readableDatabase.rawQuery("SELECT * FROM deletion", null).use { c ->
+            buildList {
+                while (c.moveToNext()) {
+                    add(Deletion(c.long("id"), c.str("kind"), c.str("upc"), c.str("remote_id")))
+                }
+            }
+        }
+
+    fun clearDeletion(id: Long) {
+        writableDatabase.delete("deletion", "id = ?", arrayOf(id.toString()))
+    }
+
+    fun countDirty(): Int =
+        readableDatabase.rawQuery(
+            "SELECT (SELECT COUNT(*) FROM product WHERE dirty=1) + " +
+                "(SELECT COUNT(*) FROM photo WHERE dirty=1 AND path!='') + " +
+                "(SELECT COUNT(*) FROM deletion)",
+            null,
+        ).use { it.moveToFirst(); it.getInt(0) }
+
+    /**
+     * Merges a product pulled from the server into the local catalog (fill-blanks, same as
+     * import) and marks it clean so restore doesn't immediately re-push it.
+     */
+    fun upsertFromRemote(p: Product) {
+        val merged = product(p.upc)?.let { fillBlanks(it, p) } ?: p
+        val values = merged.toValues().apply { put("dirty", 0) }
+        writableDatabase.insertWithOnConflict("product", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    /** True if a photo with this remote id is already known locally (restore de-dup). */
+    fun photoExistsByRemote(remoteId: String): Boolean =
+        readableDatabase.rawQuery("SELECT 1 FROM photo WHERE remote_id = ? LIMIT 1", arrayOf(remoteId))
+            .use { it.moveToFirst() }
+
+    /** Inserts a photo row pulled from the server (image downloaded lazily; path filled on first view). */
+    fun addRemotePhoto(upc: String, kind: PhotoKind, remoteId: String, createdAt: Long) {
+        writableDatabase.insert("photo", null, ContentValues().apply {
+            put("upc", upc); put("kind", kind.name); put("path", ""); put("note", "")
+            put("created_at", createdAt); put("remote_id", remoteId); put("dirty", 0)
+        })
     }
 
     /** Adds catalog rows read from an order sheet; fills blanks on any that already exist. */
@@ -393,6 +505,7 @@ class LabelDb(context: Context) : SQLiteOpenHelper(context, "labelscan.db", null
         path = str("path"),
         note = str("note"),
         createdAt = long("created_at"),
+        remoteId = str("remote_id"),
     )
 
     private fun Cursor.toReceipt() = Receipt(

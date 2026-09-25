@@ -12,8 +12,11 @@ import dev.jawsh.labelscan.data.LabelDb
 import dev.jawsh.labelscan.data.LabelRecognizer
 import dev.jawsh.labelscan.data.Photos
 import dev.jawsh.labelscan.data.PhotoKind
+import dev.jawsh.labelscan.data.PocketBase
 import dev.jawsh.labelscan.data.Product
 import dev.jawsh.labelscan.data.ProductCsv
+import dev.jawsh.labelscan.data.SyncPrefs
+import dev.jawsh.labelscan.data.SyncWorker
 import dev.jawsh.labelscan.parse.Gtin
 import dev.jawsh.labelscan.parse.LabelData
 import dev.jawsh.labelscan.parse.OrderRow
@@ -29,6 +32,7 @@ sealed interface Screen {
     data object Library : Screen
     data object Scan : Screen
     data object ScanSheet : Screen
+    data object SyncSettings : Screen
     data class Review(val label: LabelData, val photo: String) : Screen
     data class OrderReview(val rows: List<OrderRow>) : Screen
     data class Detail(val upc: String) : Screen
@@ -37,6 +41,12 @@ sealed interface Screen {
 class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     val db = LabelDb(app)
     private val recognizer = LabelRecognizer()
+    val syncPrefs = SyncPrefs(app)
+
+    /** Kicks a background push if sync is on; called after every local write. */
+    private fun autoSync() {
+        if (syncPrefs.enabled && syncPrefs.configured) SyncWorker.schedule(app)
+    }
 
     var screen by mutableStateOf<Screen>(Screen.Library)
     var query by mutableStateOf("")
@@ -122,6 +132,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             // Plain Save lands on the item so more photos can be piled on; "next" goes back to the camera.
             screen = if (scanNext) Screen.Scan else Screen.Detail(label.upc)
             refresh()
+            autoSync()
         }
     }
 
@@ -180,6 +191,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             say("Imported $n item${if (n == 1) "" else "s"}")
             screen = Screen.Library
             refresh()
+            autoSync()
         }
     }
 
@@ -199,6 +211,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             }
             say(if (n > 0) "Added $n photo${if (n == 1) "" else "s"}" else "Couldn't add those photos")
             refresh()
+            autoSync()
         }
     }
 
@@ -210,6 +223,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             }
             say("Added ${kind.label} photo")
             refresh()
+            autoSync()
         }
     }
 
@@ -229,7 +243,75 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             val path = withContext(Dispatchers.IO) { db.deletePhoto(id) }
             path?.let { withContext(Dispatchers.IO) { File(it).delete() } }
             refresh()
+            autoSync()
         }
+    }
+
+    /** Downloads any not-yet-cached images for this product (after a restore) and refreshes. */
+    fun ensurePhotos(upc: String) {
+        if (!syncPrefs.configured) return
+        viewModelScope.launch {
+            val fetched = withContext(Dispatchers.IO) {
+                val pending = db.photos(upc).filter { it.path.isEmpty() && it.remoteId.isNotEmpty() }
+                if (pending.isEmpty()) return@withContext 0
+                val pb = PocketBase(syncPrefs.baseUrl)
+                val token = syncPrefs.token.ifEmpty {
+                    runCatching { pb.authWithPassword(syncPrefs.email, syncPrefs.password) }
+                        .getOrNull()?.also { syncPrefs.token = it } ?: return@withContext 0
+                }
+                var n = 0
+                for (p in pending) {
+                    runCatching {
+                        val meta = pb.getPhoto(token, p.remoteId) ?: return@runCatching
+                        val bytes = pb.downloadPhoto(token, meta)
+                        db.setPhotoLocalPath(p.id, Photos.storeBytes(app, bytes))
+                        n++
+                    }
+                }
+                n
+            }
+            if (fetched > 0) refresh()
+        }
+    }
+
+    // ---- Sync settings ----
+
+    var syncEnabled by mutableStateOf(syncPrefs.enabled)
+        private set
+
+    fun signIn(baseUrl: String, email: String, password: String) {
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val pb = PocketBase(baseUrl.trim().trimEnd('/'))
+                    val token = pb.authWithPassword(email.trim(), password)
+                    syncPrefs.baseUrl = baseUrl
+                    syncPrefs.email = email
+                    syncPrefs.password = password
+                    syncPrefs.token = token
+                    true
+                }.getOrElse { false }
+            }
+            say(if (ok) "Signed in — sync ready" else "Sign-in failed — check URL, email and password")
+        }
+    }
+
+    fun toggleSync(on: Boolean) {
+        syncPrefs.enabled = on
+        syncEnabled = on
+        if (on) SyncWorker.schedule(app)
+    }
+
+    fun backupNow() {
+        if (!syncPrefs.configured) { say("Set up sync first"); return }
+        SyncWorker.schedule(app)
+        say("Backing up in the background…")
+    }
+
+    fun restoreFromServer() {
+        if (!syncPrefs.configured) { say("Set up sync first"); return }
+        SyncWorker.restore(app)
+        say("Restoring from server in the background…")
     }
 
     /** A typed-in UPC without its check digit (as case labels print it) gets one. */
@@ -247,6 +329,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             withContext(Dispatchers.IO) { db.updateProduct(oldUpc, fixed) }
             screen = Screen.Detail(fixed.upc)
             refresh()
+            autoSync()
         }
     }
 
@@ -256,6 +339,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             say("Deleted $upc")
             screen = Screen.Library
             refresh()
+            autoSync()
         }
     }
 
@@ -287,6 +371,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             }
             say(result.fold({ "Imported $it UPCs" }, { "Import failed: ${it.message}" }))
             refresh()
+            autoSync()
         }
     }
 

@@ -1,0 +1,4 @@
+.env
+pb_data/
+pb_public/
+minio-data/

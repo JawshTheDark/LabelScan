@@ -79,6 +79,8 @@ fun DetailScreen(vm: AppViewModel, upc: String, modifier: Modifier) {
             Detail(vm.db.product(upc), vm.db.receipts(upc), vm.db.photos(upc))
         }
     }
+    // After a restore, images arrive as metadata only; pull the bytes when the item is opened.
+    androidx.compose.runtime.LaunchedEffect(upc) { vm.ensurePhotos(upc) }
     var editing by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var addKind by remember { mutableStateOf<PhotoKind?>(null) }

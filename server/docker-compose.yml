@@ -1,0 +1,69 @@
+# LabelScan backend — PocketBase (SQL + REST API + auth + admin UI) with images
+# stored in MinIO (S3). Deploy on irc.so under /storage/docker/labelscan/.
+#
+#   cd /storage/docker/labelscan
+#   cp .env.example .env      # then edit the secrets
+#   docker compose up -d
+#
+# PocketBase listens on 8090. Put it behind your existing reverse proxy for HTTPS
+# (Android blocks plaintext HTTP by default, so the app needs an https:// URL).
+# See README.md for the proxy snippet, MinIO bucket creation and PocketBase S3 setup.
+
+services:
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - ./minio-data:/data
+    ports:
+      # Expose only if you want the MinIO console/API reachable directly.
+      # PocketBase reaches MinIO over the internal network regardless.
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # One-shot: create the bucket the first time, then exit.
+  createbucket:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD}; do sleep 2; done;
+      mc mb -p local/${MINIO_BUCKET} || true;
+      echo 'bucket ready: ${MINIO_BUCKET}';
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+
+  pocketbase:
+    image: ghcr.io/muchobien/pocketbase:0.22.21
+    restart: unless-stopped
+    depends_on:
+      - minio
+    command: >
+      --dir=/pb_data
+      --publicDir=/pb_public
+      --migrationsDir=/pb_migrations
+      --http=0.0.0.0:8090
+    volumes:
+      - ./pb_data:/pb_data
+      - ./pb_public:/pb_public
+      - ./pb_migrations:/pb_migrations
+    ports:
+      - "127.0.0.1:8090:8090"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8090/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

@@ -77,6 +77,10 @@ fun LibraryScreen(vm: AppViewModel, modifier: Modifier) {
                             menu = false
                             importer.launch(arrayOf("text/*", "application/csv", "application/vnd.ms-excel"))
                         })
+                        DropdownMenuItem(text = { Text("Sync settings") }, onClick = {
+                            menu = false
+                            vm.screen = Screen.SyncSettings
+                        })
                     }
                 },
             )

@@ -28,6 +28,7 @@ import dev.jawsh.labelscan.ui.LibraryScreen
 import dev.jawsh.labelscan.ui.OrderReviewScreen
 import dev.jawsh.labelscan.ui.ReviewScreen
 import dev.jawsh.labelscan.ui.ScanScreen
+import dev.jawsh.labelscan.ui.SyncSettingsScreen
 
 class MainActivity : ComponentActivity() {
     private val vm: AppViewModel by viewModels()
@@ -67,6 +68,7 @@ private fun App(vm: AppViewModel) {
             Screen.Library -> LibraryScreen(vm, m)
             Screen.Scan -> ScanScreen(vm, m, orderSheet = false)
             Screen.ScanSheet -> ScanScreen(vm, m, orderSheet = true)
+            Screen.SyncSettings -> SyncSettingsScreen(vm, m)
             is Screen.Review -> ReviewScreen(vm, screen, m)
             is Screen.OrderReview -> OrderReviewScreen(vm, screen, m)
             is Screen.Detail -> DetailScreen(vm, screen.upc, m)

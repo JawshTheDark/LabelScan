@@ -36,6 +36,13 @@ object Photos {
         return file.absolutePath
     }
 
+    /** Writes already-encoded image bytes (e.g. downloaded from the backend) to a local file. */
+    fun storeBytes(context: Context, bytes: ByteArray): String {
+        val file = File(dir(context), "dl_${System.currentTimeMillis()}.jpg")
+        file.outputStream().use { it.write(bytes) }
+        return file.absolutePath
+    }
+
     /** Decodes a gallery image upright and no larger than [maxPx]. */
     fun load(context: Context, uri: Uri, maxPx: Int = OCR_MAX_PX): Bitmap? {
         val resolver = context.contentResolver

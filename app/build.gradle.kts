@@ -12,8 +12,8 @@ android {
         applicationId = "dev.jawsh.labelscan"
         minSdk = 26
         targetSdk = 35
-        versionCode = 19
-        versionName = "0.5.4"
+        versionCode = 20
+        versionName = "0.6.0"
         // 64-bit ARM phones only; the bundled ML Kit models otherwise ship per ABI.
         ndk { abiFilters += listOf("arm64-v8a") }
     }
@@ -63,6 +63,11 @@ dependencies {
     // Google's document scanner (edge detect, de-skew, multi-page) — the portable
     // equivalent of Samsung's camera "scan document". Downloads on first use via Play Services.
     implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0-beta1")
+
+    // Off-device sync: HTTP to the PocketBase backend, WorkManager for reliable
+    // background/retry uploads.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 
     testImplementation("junit:junit:4.13.2")
 }
